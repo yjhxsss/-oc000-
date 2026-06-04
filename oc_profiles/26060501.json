@@ -12,6 +12,6 @@
   "typing_speed": 0.06,
   "typo_rate": 0.08,
   "emoji_rate": 0.25,
-  "reply_probability": 0.8,
+  "reply_probability": 0.9,
   "special_punct": true
 }
