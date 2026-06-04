@@ -2,6 +2,9 @@ import streamlit as st
 import openai
 import json
 import os
+import time
+import random
+import re
 from pathlib import Path
 import importlib
 import pkgutil
@@ -12,7 +15,6 @@ CHARS62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 CHAR_TO_INT = {c: i for i, c in enumerate(CHARS62)}
 
 def decode_62(s: str) -> int:
-    """将62进制字符串解码为十进制整数"""
     num = 0
     for ch in s:
         if ch not in CHAR_TO_INT:
@@ -21,7 +23,6 @@ def decode_62(s: str) -> int:
     return num
 
 def encode_62(n: int) -> str:
-    """将十进制整数编码为62进制字符串"""
     if n == 0:
         return CHARS62[0]
     res = []
@@ -35,7 +36,6 @@ OC_PROFILES_DIR = Path("oc_profiles")
 OC_PROFILES_DIR.mkdir(exist_ok=True)
 
 def load_oc_profile(oc_id):
-    """根据十进制编号加载 OC 设定"""
     file_path = OC_PROFILES_DIR / f"{oc_id}.json"
     if file_path.exists():
         with open(file_path, "r", encoding="utf-8") as f:
@@ -65,19 +65,145 @@ def get_api_key():
     except (KeyError, FileNotFoundError):
         return os.environ.get("DEEPSEEK_API_KEY", None)
 
+# ---------- 错别字替换库 ----------
+TYPO_DICT = {
+    "是": "系",
+    "我": "窝",
+    "你": "泥",
+    "很": "狠",
+    "的": "哒",
+    "了": "啦",
+    "吗": "嘛",
+    "什么": "啥",
+    "怎么": "咋",
+    "没有": "木有",
+    "喜欢": "稀饭",
+    "吃": "恰",
+    "不": "卜",
+    "知道": "造",
+    "可爱": "可耐",
+    "非常": "灰常",
+    "大家": "大嘎",
+    "同学": "童鞋",
+    "朋友": "盆友",
+    "晚安": "晚安鸭",
+    "开心": "开森",
+    "今天": "今颠",
+    "突然": "突兰",
+    "为什么": "为森么"
+}
+
+# 颜文字库
+KAOMOJI_LIST = [
+    "(◕ᴗ◕✿)",
+    "(≧◡≦)",
+    "(◍•ᴗ•◍)",
+    "(｡•̀ᴗ-)✧",
+    "(◔‿◔)",
+    "(๑•̀ㅂ•́)و✧",
+    "( •̀ ω •́ )✧",
+    "(*/ω＼*)",
+    "(´• ω •`)",
+    "(╹ڡ╹ )",
+    "(人 •͈ᴗ•͈)",
+    "(☆▽☆)",
+    "(✯ᴗ✯)",
+    "ヾ(⌐■_■)ノ♪",
+    "~(˘▾˘~)",
+    "✧(｡•̀ᴗ-)✧",
+    "(づ｡◕‿‿◕｡)づ",
+    "(*^▽^*)",
+    "(≧∇≦)ﾉ",
+    "(⌒‿⌒)"
+]
+
+# 特殊标点替换映射
+PUNCT_MAP = {
+    ".": "～",
+    ",": "，",
+    "!": "！",
+    "?": "？",
+    ";": "…",
+    ":": "：",
+    "。": "～",
+    "！": "！！",
+    "？": "？？"
+}
+
+# ---------- 文本后处理（错别字、颜文字、特殊标点）----------
+def apply_oc_text_effects(text, typo_rate, emoji_rate, special_punct):
+    if not text:
+        return text
+
+    # 特殊标点替换（在文字替换前处理，避免干扰）
+    if special_punct:
+        new_text = ""
+        for ch in text:
+            # 以一定概率替换为活泼符号
+            if ch in PUNCT_MAP and random.random() < 0.5:
+                new_text += random.choice(["～", "！", "？", "…", "❤️"])
+            else:
+                new_text += ch
+        text = new_text
+
+    # 错别字替换（按字概率）
+    if typo_rate and typo_rate > 0:
+        words = list(text)  # 逐字处理
+        for i, ch in enumerate(words):
+            if ch in TYPO_DICT and random.random() < typo_rate:
+                # 替换为谐音字
+                words[i] = TYPO_DICT[ch]
+            # 也支持双字词，简单处理：如果当前字是双字词的首字，检查后面字
+        text = "".join(words)
+        # 再做简单的二字词替换（避免单字替换破坏词）
+        for k, v in TYPO_DICT.items():
+            if len(k) == 2 and k in text:
+                if random.random() < typo_rate:
+                    text = text.replace(k, v, 1)  # 只替换一次避免循环
+
+    # 颜文字插入（按句子概率）
+    if emoji_rate and emoji_rate > 0:
+        sentences = re.split(r'(?<=[。！？.!?…])', text)
+        new_sentences = []
+        for sent in sentences:
+            if sent and random.random() < emoji_rate:
+                kaomoji = random.choice(KAOMOJI_LIST)
+                # 随机插在句首或句尾
+                if random.random() < 0.5:
+                    sent = kaomoji + sent
+                else:
+                    sent = sent + kaomoji
+            new_sentences.append(sent)
+        text = "".join(new_sentences)
+
+    return text
+
+# ---------- 打字机效果显示 ----------
+def typewriter_effect(placeholder, full_text, speed):
+    """逐字显示文本，模拟打字效果"""
+    displayed = ""
+    for ch in full_text:
+        displayed += ch
+        placeholder.markdown(displayed + "▌")
+        time.sleep(speed)
+    placeholder.markdown(full_text)
+
 # ---------- 页面配置 ----------
 st.set_page_config(page_title="OC 聊天助手", page_icon="🎭")
-st.title("🎭 OC 聊天助手")
 
 # ---------- Session State 初始化 ----------
 defaults = {
     "messages": [],
-    "oc_id": None,            # 十进制文件编号
+    "oc_id": None,
     "oc_password": "",
     "oc_name": "",
     "oc_base_prompt": "",
     "oc_forced_rules": [],
     "oc_material": None,
+    "oc_typing_speed": 0.05,
+    "oc_typo_rate": 0.0,
+    "oc_emoji_rate": 0.0,
+    "oc_special_punct": False,
     "oc_password_error": "",
     "prev_oc_id": None,
 }
@@ -85,13 +211,19 @@ for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
+# ---------- 动态标题 ----------
+if st.session_state.oc_name:
+    st.title(f"🎭 {st.session_state.oc_name}")
+else:
+    st.title("🎭 OC 聊天助手")
+
 # ---------- 顶部密码输入与清空 ----------
 col1, col2 = st.columns([4, 1])
 with col1:
     password = st.text_input(
-        "🔐 输入 OC 密码",
+        "🔐 输入 OC 密码（62进制）",
         value=st.session_state.oc_password,
-        placeholder="请从客服处获取",
+        placeholder="例如：1lLW1",
         help=f"密码由数字、大写字母、小写字母组成"
     )
 with col2:
@@ -104,17 +236,19 @@ with col2:
 if password != st.session_state.oc_password:
     st.session_state.oc_password = password
     if password.strip() == "":
-        # 清空密码时重置 OC
         st.session_state.oc_id = None
         st.session_state.oc_name = ""
         st.session_state.oc_base_prompt = ""
         st.session_state.oc_forced_rules = []
         st.session_state.oc_material = None
+        st.session_state.oc_typing_speed = 0.05
+        st.session_state.oc_typo_rate = 0.0
+        st.session_state.oc_emoji_rate = 0.0
+        st.session_state.oc_special_punct = False
         st.session_state.oc_password_error = ""
         st.session_state.messages = []
     else:
         try:
-            # 62进制解码 -> 十进制文件编号
             oc_id = decode_62(password)
             profile = load_oc_profile(oc_id)
             if profile:
@@ -123,8 +257,11 @@ if password != st.session_state.oc_password:
                 st.session_state.oc_base_prompt = profile.get("base_prompt", "")
                 st.session_state.oc_forced_rules = profile.get("forced_rules", [])
                 st.session_state.oc_material = profile.get("material", None)
+                st.session_state.oc_typing_speed = profile.get("typing_speed", 0.05)
+                st.session_state.oc_typo_rate = profile.get("typo_rate", 0.0)
+                st.session_state.oc_emoji_rate = profile.get("emoji_rate", 0.0)
+                st.session_state.oc_special_punct = profile.get("special_punct", False)
                 st.session_state.oc_password_error = ""
-                # 切换 OC 时清空历史
                 if st.session_state.prev_oc_id != oc_id:
                     st.session_state.messages = []
                 st.session_state.prev_oc_id = oc_id
@@ -135,13 +272,12 @@ if password != st.session_state.oc_password:
             st.session_state.oc_id = None
             st.session_state.oc_password_error = str(e)
 
-# 显示密码错误或当前 OC
 if st.session_state.oc_password_error:
     st.error(st.session_state.oc_password_error)
 elif st.session_state.oc_id is not None:
     st.caption(f"当前角色：{st.session_state.oc_name} (编号: {st.session_state.oc_id})")
 
-# ---------- 构建 System Prompt（含素材）----------
+# ---------- 构建 System Prompt ----------
 def build_system_content():
     content = ""
     if st.session_state.oc_id is not None:
@@ -153,7 +289,6 @@ def build_system_content():
         else:
             content = base
 
-        # 加载素材
         material_name = st.session_state.oc_material
         if material_name:
             material_path = Path("materials") / f"{material_name}.txt"
@@ -209,6 +344,7 @@ if prompt := st.chat_input("输入消息..."):
             delta = chunk.choices[0].delta
             if delta.content:
                 stream_content += delta.content
+                # 流式时不应用效果，先显示纯文本（避免闪烁），最终再处理
                 message_placeholder.markdown(stream_content + "▌")
             if delta.tool_calls:
                 for tc_delta in delta.tool_calls:
@@ -228,8 +364,8 @@ if prompt := st.chat_input("输入消息..."):
 
         if stream_content:
             full_response = stream_content
-            message_placeholder.markdown(full_response)
 
+        # 工具调用处理（如有）
         if tool_calls:
             assistant_tool_msg = {"role": "assistant", "tool_calls": tool_calls, "content": None}
             st.session_state.messages.append(assistant_tool_msg)
@@ -250,6 +386,7 @@ if prompt := st.chat_input("输入消息..."):
                 with st.chat_message("tool"):
                     st.caption(f"🔧 {func_name} → {result}")
 
+            # 第二次请求获取最终回答
             messages_for_api = []
             if system_content:
                 messages_for_api.append({"role": "system", "content": system_content})
@@ -268,9 +405,24 @@ if prompt := st.chat_input("输入消息..."):
                     if delta.content:
                         final_response += delta.content
                         message_placeholder2.markdown(final_response + "▌")
-                message_placeholder2.markdown(final_response)
                 full_response = final_response
-                st.session_state.messages.append({"role": "assistant", "content": final_response})
+                message_placeholder = message_placeholder2  # 复用后面的打字机效果
+
+        # 应用 OC 特效并播放打字机效果
+        if full_response:
+            # 取出当前 OC 的效果参数
+            typo = st.session_state.oc_typo_rate
+            emoji = st.session_state.oc_emoji_rate
+            punct = st.session_state.oc_special_punct
+            speed = st.session_state.oc_typing_speed
+
+            processed_text = apply_oc_text_effects(full_response, typo, emoji, punct)
+
+            # 显示处理后的文本（打字机效果）
+            typewriter_effect(message_placeholder, processed_text, speed)
+
+            # 将最终的加工后文本存入历史（让下次请求也能看到效果后的内容）
+            st.session_state.messages.append({"role": "assistant", "content": processed_text})
         else:
-            if full_response:
-                st.session_state.messages.append({"role": "assistant", "content": full_response})
+            # 无文字内容（极少情况）
+            pass
