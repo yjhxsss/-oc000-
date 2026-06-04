@@ -89,10 +89,10 @@ for k, v in defaults.items():
 col1, col2 = st.columns([4, 1])
 with col1:
     password = st.text_input(
-        "🔐 输入 OC 密码（62进制）",
+        "🔐 输入 OC 密码",
         value=st.session_state.oc_password,
-        placeholder="例如：1LWf",
-        help=f"密码由数字、大写字母、小写字母组成（共62个字符）"
+        placeholder="请从客服处获取",
+        help=f"密码由数字、大写字母、小写字母组成"
     )
 with col2:
     st.write("")
