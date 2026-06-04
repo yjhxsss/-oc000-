@@ -209,9 +209,9 @@ else:
 col1, col2 = st.columns([4, 1])
 with col1:
     password = st.text_input(
-        "🔐 输入 OC 密码",
+        "🔐 输入 OC 密码（62进制）",
         value=st.session_state.oc_password,
-        placeholder="请从客服处获取"
+        placeholder="例如：1lLW1"
     )
 with col2:
     st.write("")
@@ -252,13 +252,12 @@ if password != st.session_state.oc_password:
                 st.session_state.oc_special_punct = profile.get("special_punct", False)
                 st.session_state.oc_custom_typo_dict = profile.get("custom_typo_dict", None)
 
-                # 未读概率处理：优先用 unread_probability，否则转换 reply_probability
                 if "unread_probability" in profile:
                     st.session_state.oc_unread_probability = profile["unread_probability"]
                 elif "reply_probability" in profile:
                     st.session_state.oc_unread_probability = 1.0 - profile["reply_probability"]
                 else:
-                    st.session_state.oc_unread_probability = 0.08  # 默认8%
+                    st.session_state.oc_unread_probability = 0.08
 
                 st.session_state.oc_consecutive_multiplier = profile.get("consecutive_unread_multiplier", 1.0)
                 st.session_state.oc_ignore_keywords = profile.get("ignore_keywords", [])
@@ -301,20 +300,17 @@ def build_system_content():
 
 # ---------- 消息时间分隔渲染 ----------
 def render_messages_with_time():
-    """遍历消息，在适当位置插入时间标签"""
     prev_time = None
     for msg in st.session_state.messages:
-        # 跳过工具消息的独立渲染（它们会在自己的 chat_message 里处理）
         if msg["role"] == "tool":
             continue
 
-        # 判断是否需要显示时间标签
         show_time = False
         if prev_time is None:
             show_time = True
         else:
             diff = msg["timestamp"] - prev_time
-            if diff >= 1200:  # 20分钟 = 1200秒
+            if diff >= 1200:  # 20分钟
                 show_time = True
 
         if show_time:
@@ -323,12 +319,10 @@ def render_messages_with_time():
             st.markdown(f'<div class="time-divider">📅 {time_str}</div>', unsafe_allow_html=True)
             prev_time = msg["timestamp"]
 
-        # 渲染消息内容
         if msg["role"] == "user":
             with st.chat_message("user"):
                 st.markdown(msg["content"])
-                status = "已读" if msg.get("read") else "未读"
-                st.caption(status)
+                st.caption("已读" if msg.get("read") else "未读")
         else:
             with st.chat_message("assistant"):
                 st.markdown(msg["content"])
@@ -346,33 +340,31 @@ if prompt := st.chat_input("输入消息..."):
         st.error("请先输入有效的 OC 密码")
         st.stop()
 
-    # 添加用户消息（含时间戳，未读）
+    # 添加用户消息（时间戳，未读）
     user_msg = {"role": "user", "content": prompt, "read": False, "timestamp": time.time()}
     st.session_state.messages.append(user_msg)
 
-    # 立即显示用户消息
+    # 立即显示用户消息及未读标识
     with st.chat_message("user"):
         st.markdown(prompt)
+        st.caption("未读")
 
-    # 判断是否回复（未读概率 + 关键词）
+    # 判断是否回复
     should_reply = True
-    # 关键词拦截
     if st.session_state.oc_ignore_keywords:
         if any(kw in prompt for kw in st.session_state.oc_ignore_keywords):
             should_reply = False
 
-    # 未读概率计算（含连续递增）
     if should_reply:
         base_unread = st.session_state.oc_unread_probability
         multiplier = st.session_state.oc_consecutive_multiplier
         consecutive = st.session_state.consecutive_unread_count
         effective_unread = base_unread * (multiplier ** consecutive)
-        effective_unread = min(1.0, effective_unread)  # 上限100%
+        effective_unread = min(1.0, effective_unread)
         if random.random() < effective_unread:
             should_reply = False
             st.session_state.consecutive_unread_count += 1
         else:
-            # 本次回复了，重置连续未读计数
             st.session_state.consecutive_unread_count = 0
 
     # 标记已读
@@ -470,7 +462,6 @@ if prompt := st.chat_input("输入消息..."):
                     final_response += delta.content
             full_response = final_response
 
-        # 应用特效并打字机输出
         if full_response:
             typo = st.session_state.oc_typo_rate
             emoji = st.session_state.oc_emoji_rate
@@ -492,3 +483,6 @@ if prompt := st.chat_input("输入消息..."):
                 "timestamp": time.time()
             })
             message_placeholder.empty()
+
+    # 无论是否回复，都执行一次 rerun 以确保界面状态更新（已读标识、时间标签等）
+    st.rerun()
