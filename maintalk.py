@@ -7,23 +7,40 @@ import importlib
 import pkgutil
 import skills
 
+# ---------- 62进制工具 ----------
+CHARS62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+CHAR_TO_INT = {c: i for i, c in enumerate(CHARS62)}
+
+def decode_62(s: str) -> int:
+    """将62进制字符串解码为十进制整数"""
+    num = 0
+    for ch in s:
+        if ch not in CHAR_TO_INT:
+            raise ValueError(f"非法字符 '{ch}'，允许的字符：{CHARS62}")
+        num = num * 62 + CHAR_TO_INT[ch]
+    return num
+
+def encode_62(n: int) -> str:
+    """将十进制整数编码为62进制字符串"""
+    if n == 0:
+        return CHARS62[0]
+    res = []
+    while n > 0:
+        n, rem = divmod(n, 62)
+        res.append(CHARS62[rem])
+    return ''.join(reversed(res))
+
 # ---------- OC 文件操作 ----------
 OC_PROFILES_DIR = Path("oc_profiles")
 OC_PROFILES_DIR.mkdir(exist_ok=True)
 
 def load_oc_profile(oc_id):
-    """根据密码（即文件名，不含扩展名）加载 OC 设定"""
+    """根据十进制编号加载 OC 设定"""
     file_path = OC_PROFILES_DIR / f"{oc_id}.json"
     if file_path.exists():
         with open(file_path, "r", encoding="utf-8") as f:
             return json.load(f)
     return None
-
-def save_oc_profile(oc_id, data):
-    """保存 OC 设定到对应文件（oc_id 为密码/文件名）"""
-    file_path = OC_PROFILES_DIR / f"{oc_id}.json"
-    with open(file_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
 
 # ---------- 技能动态加载 ----------
 @st.cache_resource
@@ -55,7 +72,7 @@ st.title("🎭 OC 聊天助手")
 # ---------- Session State 初始化 ----------
 defaults = {
     "messages": [],
-    "oc_id": None,
+    "oc_id": None,            # 十进制文件编号
     "oc_password": "",
     "oc_name": "",
     "oc_base_prompt": "",
@@ -72,10 +89,10 @@ for k, v in defaults.items():
 col1, col2 = st.columns([4, 1])
 with col1:
     password = st.text_input(
-        "🔐 输入 OC 密码（十进制数字，对应 oc_profiles/ 下的文件名）",
+        "🔐 输入 OC 密码（62进制）",
         value=st.session_state.oc_password,
-        placeholder="例如：26060501",
-        help="密码即为 OC 配置文件的名称（不含 .json）"
+        placeholder="例如：1LWf",
+        help=f"密码由数字、大写字母、小写字母组成（共62个字符）"
     )
 with col2:
     st.write("")
@@ -96,28 +113,33 @@ if password != st.session_state.oc_password:
         st.session_state.oc_password_error = ""
         st.session_state.messages = []
     else:
-        # 直接使用密码作为文件名加载 OC
-        profile = load_oc_profile(password)
-        if profile:
-            st.session_state.oc_id = password
-            st.session_state.oc_name = profile.get("name", "未命名")
-            st.session_state.oc_base_prompt = profile.get("base_prompt", "")
-            st.session_state.oc_forced_rules = profile.get("forced_rules", [])
-            st.session_state.oc_material = profile.get("material", None)
-            st.session_state.oc_password_error = ""
-            # 切换 OC 时清空历史
-            if st.session_state.prev_oc_id != password:
-                st.session_state.messages = []
-            st.session_state.prev_oc_id = password
-        else:
+        try:
+            # 62进制解码 -> 十进制文件编号
+            oc_id = decode_62(password)
+            profile = load_oc_profile(oc_id)
+            if profile:
+                st.session_state.oc_id = oc_id
+                st.session_state.oc_name = profile.get("name", "未命名")
+                st.session_state.oc_base_prompt = profile.get("base_prompt", "")
+                st.session_state.oc_forced_rules = profile.get("forced_rules", [])
+                st.session_state.oc_material = profile.get("material", None)
+                st.session_state.oc_password_error = ""
+                # 切换 OC 时清空历史
+                if st.session_state.prev_oc_id != oc_id:
+                    st.session_state.messages = []
+                st.session_state.prev_oc_id = oc_id
+            else:
+                st.session_state.oc_id = None
+                st.session_state.oc_password_error = f"未找到 OC 文件 {oc_id}.json"
+        except ValueError as e:
             st.session_state.oc_id = None
-            st.session_state.oc_password_error = f"未找到 OC 文件 {password}.json"
+            st.session_state.oc_password_error = str(e)
 
 # 显示密码错误或当前 OC
 if st.session_state.oc_password_error:
     st.error(st.session_state.oc_password_error)
 elif st.session_state.oc_id is not None:
-    st.caption(f"当前角色：{st.session_state.oc_name} (ID: {st.session_state.oc_id})")
+    st.caption(f"当前角色：{st.session_state.oc_name} (编号: {st.session_state.oc_id})")
 
 # ---------- 构建 System Prompt（含素材）----------
 def build_system_content():
@@ -131,7 +153,7 @@ def build_system_content():
         else:
             content = base
 
-        # 加载素材（如果 OC 指定了 material 字段）
+        # 加载素材
         material_name = st.session_state.oc_material
         if material_name:
             material_path = Path("materials") / f"{material_name}.txt"
@@ -149,7 +171,6 @@ for msg in st.session_state.messages:
 
 # ---------- 聊天输入 ----------
 if prompt := st.chat_input("输入消息..."):
-    # 检查必要条件
     api_key = get_api_key()
     if not api_key:
         st.error("未检测到 API Key，请在 `.streamlit/secrets.toml` 或环境变量中设置 `DEEPSEEK_API_KEY`")
@@ -158,12 +179,10 @@ if prompt := st.chat_input("输入消息..."):
         st.error("请先输入有效的 OC 密码")
         st.stop()
 
-    # 用户消息
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # 技能加载
     tools, execute_map = load_skills()
     tools = tools if tools else None
 
@@ -174,7 +193,6 @@ if prompt := st.chat_input("输入消息..."):
         messages_for_api.append({"role": "system", "content": system_content})
     messages_for_api.extend(st.session_state.messages)
 
-    # 第一次请求（流式 + 工具调用收集）
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
         full_response = ""
@@ -212,7 +230,6 @@ if prompt := st.chat_input("输入消息..."):
             full_response = stream_content
             message_placeholder.markdown(full_response)
 
-        # 处理工具调用
         if tool_calls:
             assistant_tool_msg = {"role": "assistant", "tool_calls": tool_calls, "content": None}
             st.session_state.messages.append(assistant_tool_msg)
@@ -233,7 +250,6 @@ if prompt := st.chat_input("输入消息..."):
                 with st.chat_message("tool"):
                     st.caption(f"🔧 {func_name} → {result}")
 
-            # 第二次请求，生成最终回答
             messages_for_api = []
             if system_content:
                 messages_for_api.append({"role": "system", "content": system_content})
