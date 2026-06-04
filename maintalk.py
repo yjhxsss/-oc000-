@@ -340,7 +340,7 @@ if prompt := st.chat_input("输入消息..."):
         st.error("请先输入有效的 OC 密码")
         st.stop()
 
-    # 添加用户消息（时间戳，未读）
+    # 添加用户消息
     user_msg = {"role": "user", "content": prompt, "read": False, "timestamp": time.time()}
     st.session_state.messages.append(user_msg)
 
@@ -484,5 +484,4 @@ if prompt := st.chat_input("输入消息..."):
             })
             message_placeholder.empty()
 
-    # 无论是否回复，都执行一次 rerun 以确保界面状态更新（已读标识、时间标签等）
     st.rerun()
