@@ -6,6 +6,7 @@ import time
 import random
 import re
 from pathlib import Path
+from datetime import datetime
 import importlib
 import pkgutil
 import skills
@@ -65,7 +66,7 @@ def get_api_key():
     except (KeyError, FileNotFoundError):
         return os.environ.get("DEEPSEEK_API_KEY", None)
 
-# ---------- 默认错别字替换库 ----------
+# ---------- 默认错别字库 ----------
 DEFAULT_TYPO_DICT = {
     "是": "系", "我": "窝", "你": "泥", "很": "狠", "的": "哒",
     "了": "啦", "吗": "嘛", "什么": "啥", "怎么": "咋", "没有": "木有",
@@ -160,10 +161,11 @@ def inject_css():
             margin: 8px 0;
             box-shadow: 0 2px 6px rgba(0,0,0,0.05);
         }
-        .read-status {
-            font-size: 0.9em;
-            margin-left: 10px;
-            opacity: 0.8;
+        .time-divider {
+            text-align: center;
+            color: #888;
+            font-size: 0.85em;
+            margin: 12px 0 4px 0;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -186,7 +188,9 @@ defaults = {
     "oc_emoji_rate": 0.0,
     "oc_special_punct": False,
     "oc_custom_typo_dict": None,
-    "oc_reply_probability": 1.0,
+    "oc_unread_probability": 0.08,
+    "oc_consecutive_multiplier": 1.0,
+    "consecutive_unread_count": 0,
     "oc_ignore_keywords": [],
     "oc_password_error": "",
     "prev_oc_id": None,
@@ -207,14 +211,16 @@ with col1:
     password = st.text_input(
         "🔐 输入 OC 密码",
         value=st.session_state.oc_password,
-        placeholder="请从客服处获取密码"
+        placeholder="请从客服处获取"
     )
 with col2:
     st.write("")
     if st.button("🗑️ 清空对话"):
         st.session_state.messages = []
+        st.session_state.consecutive_unread_count = 0
         st.rerun()
 
+# 密码处理
 if password != st.session_state.oc_password:
     st.session_state.oc_password = password
     if password.strip() == "":
@@ -225,7 +231,9 @@ if password != st.session_state.oc_password:
         st.session_state.oc_typo_rate = 0.0
         st.session_state.oc_emoji_rate = 0.0
         st.session_state.oc_special_punct = False
-        st.session_state.oc_reply_probability = 1.0
+        st.session_state.oc_unread_probability = 0.08
+        st.session_state.oc_consecutive_multiplier = 1.0
+        st.session_state.consecutive_unread_count = 0
         st.session_state.oc_ignore_keywords = []
         st.session_state.messages = []
     else:
@@ -243,9 +251,19 @@ if password != st.session_state.oc_password:
                 st.session_state.oc_emoji_rate = profile.get("emoji_rate", 0.0)
                 st.session_state.oc_special_punct = profile.get("special_punct", False)
                 st.session_state.oc_custom_typo_dict = profile.get("custom_typo_dict", None)
-                st.session_state.oc_reply_probability = profile.get("reply_probability", 1.0)
+
+                # 未读概率处理：优先用 unread_probability，否则转换 reply_probability
+                if "unread_probability" in profile:
+                    st.session_state.oc_unread_probability = profile["unread_probability"]
+                elif "reply_probability" in profile:
+                    st.session_state.oc_unread_probability = 1.0 - profile["reply_probability"]
+                else:
+                    st.session_state.oc_unread_probability = 0.08  # 默认8%
+
+                st.session_state.oc_consecutive_multiplier = profile.get("consecutive_unread_multiplier", 1.0)
                 st.session_state.oc_ignore_keywords = profile.get("ignore_keywords", [])
                 st.session_state.oc_password_error = ""
+                st.session_state.consecutive_unread_count = 0
                 if st.session_state.prev_oc_id != oc_id:
                     st.session_state.messages = []
                 st.session_state.prev_oc_id = oc_id
@@ -281,19 +299,42 @@ def build_system_content():
                     content += f"\n\n[附加知识库]\n{material_content}"
     return content
 
+# ---------- 消息时间分隔渲染 ----------
+def render_messages_with_time():
+    """遍历消息，在适当位置插入时间标签"""
+    prev_time = None
+    for msg in st.session_state.messages:
+        # 跳过工具消息的独立渲染（它们会在自己的 chat_message 里处理）
+        if msg["role"] == "tool":
+            continue
+
+        # 判断是否需要显示时间标签
+        show_time = False
+        if prev_time is None:
+            show_time = True
+        else:
+            diff = msg["timestamp"] - prev_time
+            if diff >= 1200:  # 20分钟 = 1200秒
+                show_time = True
+
+        if show_time:
+            dt = datetime.fromtimestamp(msg["timestamp"])
+            time_str = dt.strftime("%m月%d日 %H:%M")
+            st.markdown(f'<div class="time-divider">📅 {time_str}</div>', unsafe_allow_html=True)
+            prev_time = msg["timestamp"]
+
+        # 渲染消息内容
+        if msg["role"] == "user":
+            with st.chat_message("user"):
+                st.markdown(msg["content"])
+                status = "已读" if msg.get("read") else "未读"
+                st.caption(status)
+        else:
+            with st.chat_message("assistant"):
+                st.markdown(msg["content"])
+
 # ---------- 显示历史消息 ----------
-for msg in st.session_state.messages:
-    if msg["role"] == "user":
-        with st.chat_message("user"):
-            st.markdown(msg["content"])
-            status = "已读" if msg.get("read") else "未读"
-            st.caption(status)
-    elif msg["role"] == "assistant":
-        with st.chat_message("assistant"):
-            st.markdown(msg["content"])
-    else:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+render_messages_with_time()
 
 # ---------- 聊天输入处理 ----------
 if prompt := st.chat_input("输入消息..."):
@@ -305,26 +346,39 @@ if prompt := st.chat_input("输入消息..."):
         st.error("请先输入有效的 OC 密码")
         st.stop()
 
-    # 添加用户消息（未读）
-    user_msg = {"role": "user", "content": prompt, "read": False}
+    # 添加用户消息（含时间戳，未读）
+    user_msg = {"role": "user", "content": prompt, "read": False, "timestamp": time.time()}
     st.session_state.messages.append(user_msg)
 
-    # 判断是否应忽略回复
+    # 立即显示用户消息
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    # 判断是否回复（未读概率 + 关键词）
     should_reply = True
     # 关键词拦截
     if st.session_state.oc_ignore_keywords:
         if any(kw in prompt for kw in st.session_state.oc_ignore_keywords):
             should_reply = False
-    # 概率拦截
-    if should_reply and st.session_state.oc_reply_probability < 1.0:
-        if random.random() > st.session_state.oc_reply_probability:
+
+    # 未读概率计算（含连续递增）
+    if should_reply:
+        base_unread = st.session_state.oc_unread_probability
+        multiplier = st.session_state.oc_consecutive_multiplier
+        consecutive = st.session_state.consecutive_unread_count
+        effective_unread = base_unread * (multiplier ** consecutive)
+        effective_unread = min(1.0, effective_unread)  # 上限100%
+        if random.random() < effective_unread:
             should_reply = False
+            st.session_state.consecutive_unread_count += 1
+        else:
+            # 本次回复了，重置连续未读计数
+            st.session_state.consecutive_unread_count = 0
 
     # 标记已读
     st.session_state.messages[-1]["read"] = True
 
     if not should_reply:
-        # 不生成任何assistant消息，直接刷新界面
         st.rerun()
 
     # ----- 正常回复流程 -----
@@ -336,7 +390,6 @@ if prompt := st.chat_input("输入消息..."):
     messages_for_api = []
     if system_content:
         messages_for_api.append({"role": "system", "content": system_content})
-    # 构建API消息（仅使用content，忽略read等字段）
     api_messages = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
     messages_for_api.extend(api_messages)
 
@@ -379,7 +432,7 @@ if prompt := st.chat_input("输入消息..."):
             full_response = stream_content
 
         if tool_calls:
-            assistant_tool_msg = {"role": "assistant", "tool_calls": tool_calls, "content": None}
+            assistant_tool_msg = {"role": "assistant", "tool_calls": tool_calls, "content": None, "timestamp": time.time()}
             st.session_state.messages.append(assistant_tool_msg)
 
             for tc in tool_calls:
@@ -393,7 +446,8 @@ if prompt := st.chat_input("输入消息..."):
                 st.session_state.messages.append({
                     "role": "tool",
                     "tool_call_id": tc["id"],
-                    "content": result
+                    "content": result,
+                    "timestamp": time.time()
                 })
                 with st.chat_message("tool"):
                     st.caption(f"🔧 {func_name} → {result}")
@@ -416,6 +470,7 @@ if prompt := st.chat_input("输入消息..."):
                     final_response += delta.content
             full_response = final_response
 
+        # 应用特效并打字机输出
         if full_response:
             typo = st.session_state.oc_typo_rate
             emoji = st.session_state.oc_emoji_rate
@@ -425,7 +480,15 @@ if prompt := st.chat_input("输入消息..."):
 
             processed = apply_oc_text_effects(full_response, typo, emoji, punct, custom_dict)
             typewriter_effect(message_placeholder, processed, speed)
-            st.session_state.messages.append({"role": "assistant", "content": processed})
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": processed,
+                "timestamp": time.time()
+            })
         else:
-            st.session_state.messages.append({"role": "assistant", "content": ""})
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": "",
+                "timestamp": time.time()
+            })
             message_placeholder.empty()
