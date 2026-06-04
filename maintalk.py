@@ -209,9 +209,9 @@ else:
 col1, col2 = st.columns([4, 1])
 with col1:
     password = st.text_input(
-        "🔐 输入 OC 密码（62进制）",
+        "🔐 输入 OC 密码",
         value=st.session_state.oc_password,
-        placeholder="例如：1lLW1"
+        placeholder="请咨询客服"
     )
 with col2:
     st.write("")
@@ -298,11 +298,35 @@ def build_system_content():
                     content += f"\n\n[附加知识库]\n{material_content}"
     return content
 
+# ---------- 消息格式转换（修复核心）----------
+def prepare_messages_for_api(session_messages):
+    """将 session 中的消息转换为 API 可接受的格式，保留必要的字段。"""
+    api_messages = []
+    for msg in session_messages:
+        # 跳过用于显示的静默消息
+        if msg.get("silent"):
+            continue
+
+        new_msg = {"role": msg["role"]}
+        if "content" in msg:
+            new_msg["content"] = msg["content"]
+        if "tool_calls" in msg:
+            new_msg["tool_calls"] = msg["tool_calls"]
+        if "tool_call_id" in msg:
+            new_msg["tool_call_id"] = msg["tool_call_id"]
+        # 注意：system 消息和其他消息可能还有其他字段，但 DeepSeek 兼容 OpenAI，这些足够。
+        api_messages.append(new_msg)
+    return api_messages
+
 # ---------- 消息时间分隔渲染 ----------
 def render_messages_with_time():
     prev_time = None
     for msg in st.session_state.messages:
+        # 工具调用消息已经在聊天框单独显示，跳过避免重复
         if msg["role"] == "tool":
+            # 但是工具结果已经以 st.chat_message("tool") 显示在输入块中，历史里不需要再次渲染。
+            continue
+        if msg.get("silent"):
             continue
 
         show_time = False
@@ -323,7 +347,7 @@ def render_messages_with_time():
             with st.chat_message("user"):
                 st.markdown(msg["content"])
                 st.caption("已读" if msg.get("read") else "未读")
-        else:
+        elif msg["role"] == "assistant":
             with st.chat_message("assistant"):
                 st.markdown(msg["content"])
 
@@ -344,7 +368,7 @@ if prompt := st.chat_input("输入消息..."):
     user_msg = {"role": "user", "content": prompt, "read": False, "timestamp": time.time()}
     st.session_state.messages.append(user_msg)
 
-    # 立即显示用户消息及未读标识
+    # 立即显示用户消息
     with st.chat_message("user"):
         st.markdown(prompt)
         st.caption("未读")
@@ -379,11 +403,12 @@ if prompt := st.chat_input("输入消息..."):
 
     client = openai.OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
     system_content = build_system_content()
+
+    # 构造第一次请求的消息
     messages_for_api = []
     if system_content:
         messages_for_api.append({"role": "system", "content": system_content})
-    api_messages = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
-    messages_for_api.extend(api_messages)
+    messages_for_api.extend(prepare_messages_for_api(st.session_state.messages))
 
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
@@ -424,9 +449,16 @@ if prompt := st.chat_input("输入消息..."):
             full_response = stream_content
 
         if tool_calls:
-            assistant_tool_msg = {"role": "assistant", "tool_calls": tool_calls, "content": None, "timestamp": time.time()}
+            # 保存 assistant 的工具调用消息（带 tool_calls，content 为 None）
+            assistant_tool_msg = {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": tool_calls,
+                "timestamp": time.time()
+            }
             st.session_state.messages.append(assistant_tool_msg)
 
+            # 执行工具并保存结果
             for tc in tool_calls:
                 func_name = tc["function"]["name"]
                 func_args = json.loads(tc["function"]["arguments"])
@@ -435,20 +467,21 @@ if prompt := st.chat_input("输入消息..."):
                     result = func(func_args)
                 else:
                     result = f"技能 {func_name} 未找到"
-                st.session_state.messages.append({
+                tool_msg = {
                     "role": "tool",
                     "tool_call_id": tc["id"],
                     "content": result,
                     "timestamp": time.time()
-                })
+                }
+                st.session_state.messages.append(tool_msg)
                 with st.chat_message("tool"):
                     st.caption(f"🔧 {func_name} → {result}")
 
+            # 第二次请求：包含系统提示、完整历史（含工具调用）
             messages_for_api = []
             if system_content:
                 messages_for_api.append({"role": "system", "content": system_content})
-            api_messages = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
-            messages_for_api.extend(api_messages)
+            messages_for_api.extend(prepare_messages_for_api(st.session_state.messages))
 
             final_response = ""
             response2 = client.chat.completions.create(
@@ -462,6 +495,7 @@ if prompt := st.chat_input("输入消息..."):
                     final_response += delta.content
             full_response = final_response
 
+        # 应用特效并打字机输出
         if full_response:
             typo = st.session_state.oc_typo_rate
             emoji = st.session_state.oc_emoji_rate
