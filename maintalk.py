@@ -65,122 +65,74 @@ def get_api_key():
     except (KeyError, FileNotFoundError):
         return os.environ.get("DEEPSEEK_API_KEY", None)
 
-# ---------- 错别字替换库 ----------
-TYPO_DICT = {
-    "是": "系",
-    "我": "窝",
-    "你": "泥",
-    "很": "狠",
-    "的": "哒",
-    "了": "啦",
-    "吗": "嘛",
-    "什么": "啥",
-    "怎么": "咋",
-    "没有": "木有",
-    "喜欢": "稀饭",
-    "吃": "恰",
-    "不": "卜",
-    "知道": "造",
-    "可爱": "可耐",
-    "非常": "灰常",
-    "大家": "大嘎",
-    "同学": "童鞋",
-    "朋友": "盆友",
-    "晚安": "晚安鸭",
-    "开心": "开森",
-    "今天": "今颠",
-    "突然": "突兰",
-    "为什么": "为森么"
+# ---------- 默认错别字替换库 ----------
+DEFAULT_TYPO_DICT = {
+    "是": "系", "我": "窝", "你": "泥", "很": "狠", "的": "哒",
+    "了": "啦", "吗": "嘛", "什么": "啥", "怎么": "咋", "没有": "木有",
+    "喜欢": "稀饭", "吃": "恰", "不": "卜", "知道": "造", "可爱": "可耐",
+    "非常": "灰常", "大家": "大嘎", "同学": "童鞋", "朋友": "盆友",
+    "晚安": "晚安鸭", "开心": "开森", "今天": "今颠", "突然": "突兰",
+    "为什么": "为森么", "觉得": "觉滴", "真的": "尊嘟", "可是": "可素",
+    "这里": "介里", "那里": "辣里", "这个": "介个", "那个": "辣个",
+    "好": "吼", "哈哈": "嘎嘎", "哪里": "哪尼", "不要": "表",
+    "人家": "伦家", "不好意思": "八好意思", "男朋友": "男票", "女朋友": "女票",
+    "这样": "酱紫", "那样": "酿紫", "出来": "粗来", "回去": "回切",
+    "回家": "回嘎", "吃饭": "恰饭", "睡觉": "碎觉", "电话": "电发",
+    "电脑": "电闹", "手机": "手鸡", "厉害": "腻害", "漂亮": "漂酿",
+    "东西": "东东", "事情": "四情", "对不起": "对卜起", "没关系": "木关系",
+    "怎么样": "肿么样", "这么": "介么", "那么": "辣么"
 }
 
 # 颜文字库
 KAOMOJI_LIST = [
-    "(◕ᴗ◕✿)",
-    "(≧◡≦)",
-    "(◍•ᴗ•◍)",
-    "(｡•̀ᴗ-)✧",
-    "(◔‿◔)",
-    "(๑•̀ㅂ•́)و✧",
-    "( •̀ ω •́ )✧",
-    "(*/ω＼*)",
-    "(´• ω •`)",
-    "(╹ڡ╹ )",
-    "(人 •͈ᴗ•͈)",
-    "(☆▽☆)",
-    "(✯ᴗ✯)",
-    "ヾ(⌐■_■)ノ♪",
-    "~(˘▾˘~)",
-    "✧(｡•̀ᴗ-)✧",
-    "(づ｡◕‿‿◕｡)づ",
-    "(*^▽^*)",
-    "(≧∇≦)ﾉ",
-    "(⌒‿⌒)"
+    "(◕ᴗ◕✿)", "(≧◡≦)", "(◍•ᴗ•◍)", "(｡•̀ᴗ-)✧", "(◔‿◔)",
+    "(๑•̀ㅂ•́)و✧", "( •̀ ω •́ )✧", "(*/ω＼*)", "(´• ω •`)",
+    "(╹ڡ╹ )", "(人 •͈ᴗ•͈)", "(☆▽☆)", "(✯ᴗ✯)",
+    "ヾ(⌐■_■)ノ♪", "~(˘▾˘~)", "✧(｡•̀ᴗ-)✧",
+    "(づ｡◕‿‿◕｡)づ", "(*^▽^*)", "(≧∇≦)ﾉ", "(⌒‿⌒)"
 ]
 
-# 特殊标点替换映射
-PUNCT_MAP = {
-    ".": "～",
-    ",": "，",
-    "!": "！",
-    "?": "？",
-    ";": "…",
-    ":": "：",
-    "。": "～",
-    "！": "！！",
-    "？": "？？"
-}
-
-# ---------- 文本后处理（错别字、颜文字、特殊标点）----------
-def apply_oc_text_effects(text, typo_rate, emoji_rate, special_punct):
+# ---------- 文本特效处理 ----------
+def apply_oc_text_effects(text, typo_rate, emoji_rate, special_punct, custom_typo_dict):
     if not text:
         return text
+    typo_dict = custom_typo_dict if custom_typo_dict else DEFAULT_TYPO_DICT
 
-    # 特殊标点替换（在文字替换前处理，避免干扰）
     if special_punct:
         new_text = ""
         for ch in text:
-            # 以一定概率替换为活泼符号
-            if ch in PUNCT_MAP and random.random() < 0.5:
+            if ch in "。，！？；：.!?;:" and random.random() < 0.5:
                 new_text += random.choice(["～", "！", "？", "…", "❤️"])
             else:
                 new_text += ch
         text = new_text
 
-    # 错别字替换（按字概率）
-    if typo_rate and typo_rate > 0:
-        words = list(text)  # 逐字处理
+    if typo_rate and typo_rate > 0 and typo_dict:
+        words = list(text)
         for i, ch in enumerate(words):
-            if ch in TYPO_DICT and random.random() < typo_rate:
-                # 替换为谐音字
-                words[i] = TYPO_DICT[ch]
-            # 也支持双字词，简单处理：如果当前字是双字词的首字，检查后面字
+            if ch in typo_dict and random.random() < typo_rate:
+                words[i] = typo_dict[ch]
         text = "".join(words)
-        # 再做简单的二字词替换（避免单字替换破坏词）
-        for k, v in TYPO_DICT.items():
-            if len(k) == 2 and k in text:
-                if random.random() < typo_rate:
-                    text = text.replace(k, v, 1)  # 只替换一次避免循环
+        for k, v in typo_dict.items():
+            if len(k) == 2 and k in text and random.random() < typo_rate:
+                text = text.replace(k, v, 1)
 
-    # 颜文字插入（按句子概率）
     if emoji_rate and emoji_rate > 0:
         sentences = re.split(r'(?<=[。！？.!?…])', text)
         new_sentences = []
         for sent in sentences:
             if sent and random.random() < emoji_rate:
                 kaomoji = random.choice(KAOMOJI_LIST)
-                # 随机插在句首或句尾
                 if random.random() < 0.5:
                     sent = kaomoji + sent
                 else:
                     sent = sent + kaomoji
             new_sentences.append(sent)
         text = "".join(new_sentences)
-
     return text
 
-# ---------- 打字机效果显示 ----------
+# ---------- 打字机效果 ----------
 def typewriter_effect(placeholder, full_text, speed):
-    """逐字显示文本，模拟打字效果"""
     displayed = ""
     for ch in full_text:
         displayed += ch
@@ -188,10 +140,39 @@ def typewriter_effect(placeholder, full_text, speed):
         time.sleep(speed)
     placeholder.markdown(full_text)
 
+# ---------- 聊天框美化CSS ----------
+def inject_css():
+    st.markdown("""
+        <style>
+        .stChatMessage [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) {
+            background: #f0f8ff;
+            border: 2px solid #a0c4ff;
+            border-radius: 18px;
+            padding: 8px 12px;
+            margin: 8px 0;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+        }
+        .stChatMessage [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) {
+            background: #fffbf0;
+            border: 2px solid #ffd6a5;
+            border-radius: 18px;
+            padding: 8px 12px;
+            margin: 8px 0;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+        }
+        .read-status {
+            font-size: 0.9em;
+            margin-left: 10px;
+            opacity: 0.8;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
 # ---------- 页面配置 ----------
 st.set_page_config(page_title="OC 聊天助手", page_icon="🎭")
+inject_css()
 
-# ---------- Session State 初始化 ----------
+# ---------- Session State ----------
 defaults = {
     "messages": [],
     "oc_id": None,
@@ -204,6 +185,9 @@ defaults = {
     "oc_typo_rate": 0.0,
     "oc_emoji_rate": 0.0,
     "oc_special_punct": False,
+    "oc_custom_typo_dict": None,
+    "oc_reply_probability": 1.0,
+    "oc_ignore_keywords": [],
     "oc_password_error": "",
     "prev_oc_id": None,
 }
@@ -217,14 +201,13 @@ if st.session_state.oc_name:
 else:
     st.title("🎭 OC 聊天助手")
 
-# ---------- 顶部密码输入与清空 ----------
+# ---------- 密码与清空 ----------
 col1, col2 = st.columns([4, 1])
 with col1:
     password = st.text_input(
-        "🔐 输入 OC 密码（62进制）",
+        "🔐 输入 OC 密码",
         value=st.session_state.oc_password,
-        placeholder="例如：1lLW1",
-        help=f"密码由数字、大写字母、小写字母组成"
+        placeholder="请从客服处获取密码"
     )
 with col2:
     st.write("")
@@ -232,20 +215,18 @@ with col2:
         st.session_state.messages = []
         st.rerun()
 
-# 处理密码输入变化
 if password != st.session_state.oc_password:
     st.session_state.oc_password = password
     if password.strip() == "":
-        st.session_state.oc_id = None
-        st.session_state.oc_name = ""
-        st.session_state.oc_base_prompt = ""
-        st.session_state.oc_forced_rules = []
-        st.session_state.oc_material = None
+        for key in ["oc_id", "oc_name", "oc_base_prompt", "oc_forced_rules",
+                    "oc_material", "oc_custom_typo_dict", "oc_password_error"]:
+            st.session_state[key] = None if key != "oc_forced_rules" else []
         st.session_state.oc_typing_speed = 0.05
         st.session_state.oc_typo_rate = 0.0
         st.session_state.oc_emoji_rate = 0.0
         st.session_state.oc_special_punct = False
-        st.session_state.oc_password_error = ""
+        st.session_state.oc_reply_probability = 1.0
+        st.session_state.oc_ignore_keywords = []
         st.session_state.messages = []
     else:
         try:
@@ -261,6 +242,9 @@ if password != st.session_state.oc_password:
                 st.session_state.oc_typo_rate = profile.get("typo_rate", 0.0)
                 st.session_state.oc_emoji_rate = profile.get("emoji_rate", 0.0)
                 st.session_state.oc_special_punct = profile.get("special_punct", False)
+                st.session_state.oc_custom_typo_dict = profile.get("custom_typo_dict", None)
+                st.session_state.oc_reply_probability = profile.get("reply_probability", 1.0)
+                st.session_state.oc_ignore_keywords = profile.get("ignore_keywords", [])
                 st.session_state.oc_password_error = ""
                 if st.session_state.prev_oc_id != oc_id:
                     st.session_state.messages = []
@@ -274,10 +258,8 @@ if password != st.session_state.oc_password:
 
 if st.session_state.oc_password_error:
     st.error(st.session_state.oc_password_error)
-elif st.session_state.oc_id is not None:
-    st.caption(f"当前角色：{st.session_state.oc_name} (编号: {st.session_state.oc_id})")
 
-# ---------- 构建 System Prompt ----------
+# ---------- System Prompt ----------
 def build_system_content():
     content = ""
     if st.session_state.oc_id is not None:
@@ -301,23 +283,51 @@ def build_system_content():
 
 # ---------- 显示历史消息 ----------
 for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+    if msg["role"] == "user":
+        with st.chat_message("user"):
+            st.markdown(msg["content"])
+            status = "已读" if msg.get("read") else "未读"
+            st.caption(status)
+    elif msg["role"] == "assistant":
+        with st.chat_message("assistant"):
+            st.markdown(msg["content"])
+    else:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
-# ---------- 聊天输入 ----------
+# ---------- 聊天输入处理 ----------
 if prompt := st.chat_input("输入消息..."):
     api_key = get_api_key()
     if not api_key:
-        st.error("未检测到 API Key，请在 `.streamlit/secrets.toml` 或环境变量中设置 `DEEPSEEK_API_KEY`")
+        st.error("未配置 API Key")
         st.stop()
     if st.session_state.oc_id is None:
         st.error("请先输入有效的 OC 密码")
         st.stop()
 
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+    # 添加用户消息（未读）
+    user_msg = {"role": "user", "content": prompt, "read": False}
+    st.session_state.messages.append(user_msg)
 
+    # 判断是否应忽略回复
+    should_reply = True
+    # 关键词拦截
+    if st.session_state.oc_ignore_keywords:
+        if any(kw in prompt for kw in st.session_state.oc_ignore_keywords):
+            should_reply = False
+    # 概率拦截
+    if should_reply and st.session_state.oc_reply_probability < 1.0:
+        if random.random() > st.session_state.oc_reply_probability:
+            should_reply = False
+
+    # 标记已读
+    st.session_state.messages[-1]["read"] = True
+
+    if not should_reply:
+        # 不生成任何assistant消息，直接刷新界面
+        st.rerun()
+
+    # ----- 正常回复流程 -----
     tools, execute_map = load_skills()
     tools = tools if tools else None
 
@@ -326,12 +336,17 @@ if prompt := st.chat_input("输入消息..."):
     messages_for_api = []
     if system_content:
         messages_for_api.append({"role": "system", "content": system_content})
-    messages_for_api.extend(st.session_state.messages)
+    # 构建API消息（仅使用content，忽略read等字段）
+    api_messages = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
+    messages_for_api.extend(api_messages)
 
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
+        message_placeholder.markdown("对方正在输入中...")
+
         full_response = ""
         tool_calls = []
+
         response = client.chat.completions.create(
             model="deepseek-chat",
             messages=messages_for_api,
@@ -344,8 +359,6 @@ if prompt := st.chat_input("输入消息..."):
             delta = chunk.choices[0].delta
             if delta.content:
                 stream_content += delta.content
-                # 流式时不应用效果，先显示纯文本（避免闪烁），最终再处理
-                message_placeholder.markdown(stream_content + "▌")
             if delta.tool_calls:
                 for tc_delta in delta.tool_calls:
                     if tc_delta.index >= len(tool_calls):
@@ -365,7 +378,6 @@ if prompt := st.chat_input("输入消息..."):
         if stream_content:
             full_response = stream_content
 
-        # 工具调用处理（如有）
         if tool_calls:
             assistant_tool_msg = {"role": "assistant", "tool_calls": tool_calls, "content": None}
             st.session_state.messages.append(assistant_tool_msg)
@@ -386,43 +398,34 @@ if prompt := st.chat_input("输入消息..."):
                 with st.chat_message("tool"):
                     st.caption(f"🔧 {func_name} → {result}")
 
-            # 第二次请求获取最终回答
             messages_for_api = []
             if system_content:
                 messages_for_api.append({"role": "system", "content": system_content})
-            messages_for_api.extend(st.session_state.messages)
+            api_messages = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
+            messages_for_api.extend(api_messages)
 
-            with st.chat_message("assistant"):
-                message_placeholder2 = st.empty()
-                final_response = ""
-                response2 = client.chat.completions.create(
-                    model="deepseek-chat",
-                    messages=messages_for_api,
-                    stream=True
-                )
-                for chunk in response2:
-                    delta = chunk.choices[0].delta
-                    if delta.content:
-                        final_response += delta.content
-                        message_placeholder2.markdown(final_response + "▌")
-                full_response = final_response
-                message_placeholder = message_placeholder2  # 复用后面的打字机效果
+            final_response = ""
+            response2 = client.chat.completions.create(
+                model="deepseek-chat",
+                messages=messages_for_api,
+                stream=True
+            )
+            for chunk in response2:
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    final_response += delta.content
+            full_response = final_response
 
-        # 应用 OC 特效并播放打字机效果
         if full_response:
-            # 取出当前 OC 的效果参数
             typo = st.session_state.oc_typo_rate
             emoji = st.session_state.oc_emoji_rate
             punct = st.session_state.oc_special_punct
+            custom_dict = st.session_state.oc_custom_typo_dict
             speed = st.session_state.oc_typing_speed
 
-            processed_text = apply_oc_text_effects(full_response, typo, emoji, punct)
-
-            # 显示处理后的文本（打字机效果）
-            typewriter_effect(message_placeholder, processed_text, speed)
-
-            # 将最终的加工后文本存入历史（让下次请求也能看到效果后的内容）
-            st.session_state.messages.append({"role": "assistant", "content": processed_text})
+            processed = apply_oc_text_effects(full_response, typo, emoji, punct, custom_dict)
+            typewriter_effect(message_placeholder, processed, speed)
+            st.session_state.messages.append({"role": "assistant", "content": processed})
         else:
-            # 无文字内容（极少情况）
-            pass
+            st.session_state.messages.append({"role": "assistant", "content": ""})
+            message_placeholder.empty()
