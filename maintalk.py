@@ -7,38 +7,23 @@ import importlib
 import pkgutil
 import skills
 
-# ---------- 60进制工具 ----------
-CHAR60 = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"[:60]
-CHAR60_MAP = {c: i for i, c in enumerate(CHAR60)}
-
-def decode_60(s):
-    s = s.strip()
-    num = 0
-    for ch in s:
-        if ch not in CHAR60_MAP:
-            raise ValueError(f"非法字符 '{ch}'，允许字符：{CHAR60}")
-        num = num * 60 + CHAR60_MAP[ch]
-    return num
-
-def encode_60(n):
-    if n == 0:
-        return CHAR60[0]
-    res = []
-    while n > 0:
-        n, rem = divmod(n, 60)
-        res.append(CHAR60[rem])
-    return ''.join(reversed(res))
-
 # ---------- OC 文件操作 ----------
 OC_PROFILES_DIR = Path("oc_profiles")
 OC_PROFILES_DIR.mkdir(exist_ok=True)
 
 def load_oc_profile(oc_id):
+    """根据密码（即文件名，不含扩展名）加载 OC 设定"""
     file_path = OC_PROFILES_DIR / f"{oc_id}.json"
     if file_path.exists():
         with open(file_path, "r", encoding="utf-8") as f:
             return json.load(f)
     return None
+
+def save_oc_profile(oc_id, data):
+    """保存 OC 设定到对应文件（oc_id 为密码/文件名）"""
+    file_path = OC_PROFILES_DIR / f"{oc_id}.json"
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 # ---------- 技能动态加载 ----------
 @st.cache_resource
@@ -75,7 +60,7 @@ defaults = {
     "oc_name": "",
     "oc_base_prompt": "",
     "oc_forced_rules": [],
-    "oc_material": None,          # 素材文件名（不含扩展名）
+    "oc_material": None,
     "oc_password_error": "",
     "prev_oc_id": None,
 }
@@ -87,13 +72,13 @@ for k, v in defaults.items():
 col1, col2 = st.columns([4, 1])
 with col1:
     password = st.text_input(
-        "🔐 输入 OC 密码（60进制）",
+        "🔐 输入 OC 密码（十进制数字，对应 oc_profiles/ 下的文件名）",
         value=st.session_state.oc_password,
-        placeholder="例如：A3x",
-        help=f"允许字符：{CHAR60}"
+        placeholder="例如：26060501",
+        help="密码即为 OC 配置文件的名称（不含 .json）"
     )
 with col2:
-    st.write("")  # 占位对齐
+    st.write("")
     if st.button("🗑️ 清空对话"):
         st.session_state.messages = []
         st.rerun()
@@ -111,26 +96,22 @@ if password != st.session_state.oc_password:
         st.session_state.oc_password_error = ""
         st.session_state.messages = []
     else:
-        try:
-            oc_id = decode_60(password)
-            profile = load_oc_profile(oc_id)
-            if profile:
-                st.session_state.oc_id = oc_id
-                st.session_state.oc_name = profile.get("name", "未命名")
-                st.session_state.oc_base_prompt = profile.get("base_prompt", "")
-                st.session_state.oc_forced_rules = profile.get("forced_rules", [])
-                st.session_state.oc_material = profile.get("material", None)
-                st.session_state.oc_password_error = ""
-                # 切换 OC 时清空历史
-                if st.session_state.prev_oc_id != oc_id:
-                    st.session_state.messages = []
-                st.session_state.prev_oc_id = oc_id
-            else:
-                st.session_state.oc_id = None
-                st.session_state.oc_password_error = f"密码有效，但未找到编号 {oc_id} 的 OC 文件"
-        except ValueError as e:
+        # 直接使用密码作为文件名加载 OC
+        profile = load_oc_profile(password)
+        if profile:
+            st.session_state.oc_id = password
+            st.session_state.oc_name = profile.get("name", "未命名")
+            st.session_state.oc_base_prompt = profile.get("base_prompt", "")
+            st.session_state.oc_forced_rules = profile.get("forced_rules", [])
+            st.session_state.oc_material = profile.get("material", None)
+            st.session_state.oc_password_error = ""
+            # 切换 OC 时清空历史
+            if st.session_state.prev_oc_id != password:
+                st.session_state.messages = []
+            st.session_state.prev_oc_id = password
+        else:
             st.session_state.oc_id = None
-            st.session_state.oc_password_error = str(e)
+            st.session_state.oc_password_error = f"未找到 OC 文件 {password}.json"
 
 # 显示密码错误或当前 OC
 if st.session_state.oc_password_error:
