@@ -142,12 +142,6 @@ def inject_css():
             border-radius:6px 20px 20px 20px; margin-right:8px;
         }
         .time-divider {text-align:center; color:#999; font-size:0.85em; margin:16px 0 8px 0;}
-        /* 铃铛红点基础 */
-        button[data-st-key="bell_btn"] {position:relative;}
-        button[data-st-key="bell_btn"]::after {
-            content:''; position:absolute; top:2px; right:2px; width:12px; height:12px;
-            background:red; border-radius:50%; display:none;
-        }
         </style>
     """, unsafe_allow_html=True)
 
@@ -235,13 +229,15 @@ if S.oc_name:
 else:
     st.title("🎭 OC 聊天助手")
 
-# 密码行：输入框 + 正确符号 + 清空按钮
-c1, c2, c3 = st.columns([4.5, 0.5, 1])
+# 密码行：标签[密码状态] + 符号 + 清空按钮
+c1, c2, c3 = st.columns([4, 0.5, 1])
 with c1:
-    pw = st.text_input("🔐 OC 密码", key="oc_pw_input", value=S.oc_pw)
+    pw = st.text_input("密码状态", key="oc_pw_input", value=S.oc_pw)
 with c2:
     if S.oc_id is not None:
-        st.markdown("✅", unsafe_allow_html=True)
+        st.markdown("✅")
+    elif S.pw_error:
+        st.markdown("❌")
     else:
         st.write("")
 with c3:
@@ -294,16 +290,15 @@ if pw != S.oc_pw:
         except Exception as e:
             S.oc_id = None; S.pw_error = str(e)
 
-# ---------- 渲染消息（修复未读状态）----------
+# ---------- 渲染消息 ----------
 prev_t = None
 for i, msg in enumerate(S.msgs):
     if msg["role"] == "tool" or msg.get("silent"): continue
     if msg["role"] == "assistant" and not msg.get("content"): continue
 
-    # 优先使用 read 字段（如果为 True 则已读），否则动态判断
     is_read = False
     if msg["role"] == "user":
-        if msg.get("read"):                     # ✅ 新增：信任 read 标志
+        if msg.get("read"):
             is_read = True
         else:
             for j in range(i+1, len(S.msgs)):
@@ -327,18 +322,34 @@ for i, msg in enumerate(S.msgs):
         with st.chat_message("assistant"):
             st.markdown(msg["content"])
 
-# ---------- 铃铛（提前渲染以利红点）----------
-# 红点 CSS 必须在按钮之后注入，这里先把按钮和红点放在一起
+# ---------- 铃铛按钮（绝对可靠的红点实现）----------
 col_a, col_b = st.columns([9,1])
 with col_b:
     bell = st.button("🔔", key="bell_btn", help="主动消息")
 
-# 红点注入（紧接按钮后）
+# 红点：直接在按钮后注入 style，使用更强的选择器，确保显示
 if S.auto_pending:
     st.markdown("""
         <style>
         button[data-st-key="bell_btn"]::after {
+            content: "";
             display: block !important;
+            position: absolute !important;
+            top: 2px !important;
+            right: 2px !important;
+            width: 12px !important;
+            height: 12px !important;
+            background: red !important;
+            border-radius: 50% !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+else:
+    # 没有待发消息时，确保隐藏红点（清除可能残留的显示）
+    st.markdown("""
+        <style>
+        button[data-st-key="bell_btn"]::after {
+            display: none !important;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -347,10 +358,9 @@ if bell and S.auto_pending:
     send_auto()
     st.rerun()
 
-# 聊天输入
+# ---------- 聊天输入 ----------
 user_input = st.chat_input("输入消息...")
 
-# ---------- 用户输入处理 ----------
 if user_input:
     key = get_key()
     if not key: st.error("未配置 API Key"); st.stop()
@@ -363,19 +373,16 @@ if user_input:
     else:
         if S.auto_pending:
             send_auto()
-        # 添加用户消息，并立即设置 read = False
         S.msgs.append({"role":"user","content":user_input,"read":False,"timestamp":now_ts()})
         S.last_prompt = user_input
-        S.stage = "mark_read"          # 进入 mark_read 阶段
+        S.stage = "mark_read"
         st.rerun()
 
-# ---------- 两阶段处理（先标记已读，再生成）----------
 if S.stage == "mark_read":
-    # 标记最后一条用户消息为已读
     if S.msgs and S.msgs[-1]["role"] == "user":
         S.msgs[-1]["read"] = True
     S.stage = "generating"
-    st.rerun()    # 刷新页面，此时消息已显示为“已读”
+    st.rerun()
 
 if S.stage == "generating":
     key = get_key()
@@ -464,7 +471,6 @@ if S.stage == "generating":
                 typewriter(ph2, para, speed)
             S.msgs.append({"role":"assistant","content":para,"timestamp":now_ts()})
 
-    # 主动消息生成（仅点亮红点）
     if S.auto_prob > 0 and random.random() < S.auto_prob:
         gen_auto()
 
@@ -473,6 +479,5 @@ if S.stage == "generating":
         nxt = S.queue.pop(0)
         S.msgs.append({"role":"user","content":nxt,"read":False,"timestamp":now_ts()})
         S.last_prompt = nxt
-        S.stage = "mark_read"   # 排队消息也走两阶段
-        st.rerun()
+        S.stage = "mark_read"
     st.rerun()
