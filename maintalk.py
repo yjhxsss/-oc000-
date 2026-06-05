@@ -154,7 +154,7 @@ def send_paragraphs(paragraphs, speed):
         if idx != len(paragraphs) - 1:
             time.sleep(0.5)
 
-# ===================== CSS 布局（固定输入框，绝对定位铃铛） =====================
+# ===================== CSS 布局（固定输入框，固定铃铛） =====================
 def inject_css():
     st.markdown("""
         <style>
@@ -202,25 +202,31 @@ def inject_css():
             padding: 10px 20px !important;
             box-shadow: 0 -2px 10px rgba(0,0,0,0.05) !important;
         }
-        /* 聊天内容区域底部留白，避免被输入框遮挡 */
+        /* 聊天内容区域底部留白 */
         .main .block-container {
             padding-bottom: 90px !important;
         }
 
-        /* 铃铛按钮固定在右下角，与输入框右侧对齐 */
-        button[data-st-key="bell_btn"] {
+        /* 铃铛按钮容器 - 强制固定，与输入框无关 */
+        div[data-st-key="bell_btn"] {
             position: fixed !important;
             bottom: 15px !important;
             right: 20px !important;
             z-index: 1001 !important;
+            background: transparent !important;
+            border: none !important;
+            padding: 0 !important;
+        }
+        /* 铃铛按钮本身 */
+        div[data-st-key="bell_btn"] button {
             background: none !important;
             border: none !important;
             font-size: 24px !important;
-            padding: 5px !important;
             cursor: pointer !important;
+            padding: 5px !important;
         }
-        /* 铃铛红点（默认隐藏，有消息时显示） */
-        button[data-st-key="bell_btn"]::after {
+        /* 红点默认隐藏 */
+        div[data-st-key="bell_btn"] button::after {
             content: '';
             position: absolute;
             top: 2px;
@@ -517,7 +523,6 @@ def inject_auto_timer_js():
     if timer_end is None:
         return
     remaining = max(0, int(timer_end - time.time()))
-    # 隐藏的触发输入框（完全不可见）
     st.text_input("", key="auto_timer_trigger", label_visibility="collapsed")
     st.markdown("""<style>div[data-st-key="auto_timer_trigger"] { display: none !important; }</style>""", unsafe_allow_html=True)
     js_code = f"""
@@ -566,17 +571,17 @@ def process_queued_messages():
 # ===================== 渲染历史消息 =====================
 render_messages_with_time()
 
-# ===================== 聊天输入框（自动固定，铃铛独立） =====================
+# ===================== UI：输入框 + 铃铛 =====================
 user_input = st.chat_input("输入消息...")
 
-# 铃铛按钮（使用绝对定位，CSS已固定）
+# 铃铛按钮（通过CSS固定到右下角）
 bell_clicked = st.button("🔔", key="bell_btn", help="AI 主动消息（点击立即查看）")
 
-# 红点动态注入
+# 有消息时显示红点
 if st.session_state.auto_message_pending:
     st.markdown("""
         <style>
-        button[data-st-key="bell_btn"]::after {
+        div[data-st-key="bell_btn"] button::after {
             display: block !important;
         }
         </style>
@@ -597,20 +602,16 @@ if user_input:
         st.error("请先输入有效的 OC 密码")
         st.stop()
 
-    # 取消主动消息定时器
     st.session_state.auto_timer_active = False
     st.session_state.auto_timer_end = None
 
-    # 如果 AI 正在输出，加入队列
     if st.session_state.ai_output_in_progress:
         st.session_state.queued_user_messages.append(user_input)
         st.info("消息已加入排队，等待 AI 回复完成后处理")
         st.rerun()
     else:
-        # 如果有待发送的主动消息，先发送它
         if st.session_state.auto_message_pending:
             send_auto_message_now()
-        # 添加用户消息（未读）
         st.session_state.messages.append({
             "role": "user",
             "content": user_input,
@@ -621,7 +622,7 @@ if user_input:
         st.session_state.reply_stage = "mark_read"
         st.rerun()
 
-# ===================== 两阶段处理：先标记已读，再生成回复 =====================
+# ===================== 两阶段处理 =====================
 if st.session_state.reply_stage == "mark_read":
     if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
         st.session_state.messages[-1]["read"] = True
@@ -673,7 +674,6 @@ if st.session_state.reply_stage == "generating":
     typing_placeholder = st.empty()
     typing_placeholder.markdown('<p class="typing-indicator">对方正在输入中...</p>', unsafe_allow_html=True)
 
-    # 紧急度判断（AI自主）
     urgency = 0.0
     if st.session_state.oc_use_ai_urgency:
         try:
@@ -777,7 +777,6 @@ if st.session_state.reply_stage == "generating":
         paragraphs = split_paragraphs(processed)
         send_paragraphs(paragraphs, speed)
 
-    # 主动消息生成及启动定时器
     if st.session_state.oc_auto_prob > 0 and random.random() < st.session_state.oc_auto_prob:
         generate_auto_message()
         delay = random.randint(st.session_state.oc_auto_delay_min, st.session_state.oc_auto_delay_max)
