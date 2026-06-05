@@ -154,7 +154,7 @@ def send_paragraphs(paragraphs, speed):
         if idx != len(paragraphs) - 1:
             time.sleep(0.5)
 
-# ===================== CSS 布局（固定输入框，固定铃铛） =====================
+# ===================== CSS 布局 =====================
 def inject_css():
     st.markdown("""
         <style>
@@ -202,40 +202,14 @@ def inject_css():
             padding: 10px 20px !important;
             box-shadow: 0 -2px 10px rgba(0,0,0,0.05) !important;
         }
-        /* 聊天内容区域底部留白 */
+        /* 内容区域底部留白 */
         .main .block-container {
             padding-bottom: 90px !important;
         }
 
-        /* 铃铛按钮容器 - 强制固定，与输入框无关 */
-        div[data-st-key="bell_btn"] {
-            position: fixed !important;
-            bottom: 15px !important;
-            right: 20px !important;
-            z-index: 1001 !important;
-            background: transparent !important;
-            border: none !important;
-            padding: 0 !important;
-        }
-        /* 铃铛按钮本身 */
-        div[data-st-key="bell_btn"] button {
-            background: none !important;
-            border: none !important;
-            font-size: 24px !important;
-            cursor: pointer !important;
-            padding: 5px !important;
-        }
-        /* 红点默认隐藏 */
-        div[data-st-key="bell_btn"] button::after {
-            content: '';
-            position: absolute;
-            top: 2px;
-            right: 2px;
-            width: 10px;
-            height: 10px;
-            background: red;
-            border-radius: 50%;
-            display: none;
+        /* 隐藏定时器触发输入框 */
+        div[data-st-key="auto_timer_trigger"] {
+            display: none !important;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -280,6 +254,7 @@ defaults = {
     "oc_use_ai_urgency": False,
     "ai_output_in_progress": False,
     "queued_user_messages": [],
+    "bell_trigger": "",          # 用于接收 HTML 铃铛的点击信号
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -335,6 +310,7 @@ if password != st.session_state.oc_password:
         st.session_state.reply_stage = None
         st.session_state.ai_output_in_progress = False
         st.session_state.queued_user_messages = []
+        st.session_state.bell_trigger = ""
     else:
         try:
             oc_id = decode_62(password)
@@ -375,6 +351,7 @@ if password != st.session_state.oc_password:
                     st.session_state.queued_user_messages = []
                     st.session_state.auto_timer_end = None
                     st.session_state.auto_timer_active = False
+                    st.session_state.bell_trigger = ""
                 st.session_state.prev_oc_id = oc_id
             else:
                 st.session_state.oc_id = None
@@ -524,7 +501,6 @@ def inject_auto_timer_js():
         return
     remaining = max(0, int(timer_end - time.time()))
     st.text_input("", key="auto_timer_trigger", label_visibility="collapsed")
-    st.markdown("""<style>div[data-st-key="auto_timer_trigger"] { display: none !important; }</style>""", unsafe_allow_html=True)
     js_code = f"""
     <script>
     setTimeout(() => {{
@@ -541,15 +517,12 @@ def inject_auto_timer_js():
 
 inject_auto_timer_js()
 
-# 检测定时器触发
 if st.session_state.get("auto_timer_trigger") and not st.session_state.auto_timer_trigger_handled:
     trigger_val = st.session_state.auto_timer_trigger
     if trigger_val.startswith("trigger_"):
         st.session_state.auto_timer_trigger_handled = True
         if st.session_state.auto_timer_active and st.session_state.auto_timer_end and time.time() >= st.session_state.auto_timer_end:
             send_auto_message_now()
-            st.session_state.auto_timer_active = False
-            st.session_state.auto_timer_end = None
             st.rerun()
 
 # ===================== 队列处理 =====================
@@ -571,26 +544,66 @@ def process_queued_messages():
 # ===================== 渲染历史消息 =====================
 render_messages_with_time()
 
-# ===================== UI：输入框 + 铃铛 =====================
+# ===================== 固定输入框 =====================
 user_input = st.chat_input("输入消息...")
 
-# 铃铛按钮（通过CSS固定到右下角）
-bell_clicked = st.button("🔔", key="bell_btn", help="AI 主动消息（点击立即查看）")
+# ===================== 纯 HTML 铃铛（固定定位，可靠） =====================
+bell_html = f"""
+<div id="bell-container" style="
+    position: fixed;
+    bottom: 15px;
+    right: 20px;
+    z-index: 1001;
+    background: white;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    cursor: pointer;
+">
+    <span style="font-size: 24px;">🔔</span>
+    <span id="bell-badge" style="
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        width: 12px;
+        height: 12px;
+        background: red;
+        border-radius: 50%;
+        display: { 'block' if st.session_state.auto_message_pending else 'none' };
+    "></span>
+</div>
+<script>
+const bell = document.getElementById('bell-container');
+bell.addEventListener('click', () => {{
+    // 找到隐藏的触发输入框并赋值
+    const triggerInput = window.parent.document.querySelector('input[aria-label=""]');
+    if (triggerInput) {{
+        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        nativeInputValueSetter.call(triggerInput, 'bell_clicked_' + Date.now());
+        triggerInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
+    }}
+}});
+</script>
+"""
+st.components.v1.html(bell_html, height=0)
 
-# 有消息时显示红点
-if st.session_state.auto_message_pending:
-    st.markdown("""
-        <style>
-        div[data-st-key="bell_btn"] button::after {
-            display: block !important;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-
-if bell_clicked:
-    if st.session_state.auto_message_pending:
-        send_auto_message_now()
-        st.rerun()
+# 检测铃铛点击（通过隐藏输入框触发）
+if st.session_state.get("auto_timer_trigger") and not st.session_state.auto_timer_trigger_handled:
+    trigger_val = st.session_state.auto_timer_trigger
+    if trigger_val.startswith("bell_clicked_"):
+        st.session_state.auto_timer_trigger = ""  # 清除触发信号
+        if st.session_state.auto_message_pending:
+            send_auto_message_now()
+            st.rerun()
+    elif trigger_val.startswith("trigger_"):
+        st.session_state.auto_timer_trigger_handled = True
+        if st.session_state.auto_timer_active and st.session_state.auto_timer_end and time.time() >= st.session_state.auto_timer_end:
+            send_auto_message_now()
+            st.rerun()
 
 # ===================== 用户输入处理 =====================
 if user_input:
