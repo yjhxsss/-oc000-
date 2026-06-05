@@ -196,6 +196,7 @@ def inject_css():
         div[data-st-key="auto_timer_trigger"] {
             display: none !important;
         }
+        /* 铃铛按钮红点 */
         button[data-st-key="bell_btn"] {
             position: relative;
         }
@@ -314,8 +315,8 @@ if st.session_state.oc_name:
 else:
     st.title("🎭 OC 聊天助手")
 
-# ===================== 密码 + 清空 + 铃铛行 =====================
-col1, col2, col3 = st.columns([5, 1, 1])
+# ===================== 密码与清空（无铃铛） =====================
+col1, col2 = st.columns([5, 1])
 with col1:
     password = st.text_input("🔐 OC 密码", key="oc_password_input", value=st.session_state.oc_password)
 with col2:
@@ -324,8 +325,6 @@ with col2:
             if key in st.session_state:
                 st.session_state[key] = defaults[key]
         st.rerun()
-with col3:
-    bell_clicked = st.button("🔔", key="bell_btn", help="AI 主动消息（点击立即查看）")
 
 # 密码正确时输入框变绿
 if st.session_state.oc_id is not None:
@@ -341,22 +340,6 @@ if st.session_state.oc_id is not None:
 # 密码错误提示
 if st.session_state.oc_password_error:
     st.error("❌ 密码无效")
-
-# 铃铛红点
-if st.session_state.auto_message_pending:
-    st.markdown("""
-        <style>
-        button[data-st-key="bell_btn"]::after {
-            display: block !important;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-
-# 铃铛点击处理
-if bell_clicked:
-    if st.session_state.auto_message_pending:
-        send_auto_message_now()
-        st.rerun()
 
 # 密码处理
 if password != st.session_state.oc_password:
@@ -567,8 +550,27 @@ def process_queued_messages():
 # ===================== 渲染历史消息 =====================
 render_messages_with_time()
 
-# ===================== 聊天输入框 =====================
-user_input = st.chat_input("输入消息...")
+# ===================== 聊天输入区域：铃铛 + 输入框 =====================
+input_col, bell_col = st.columns([12, 1])
+with bell_col:
+    bell_clicked = st.button("🔔", key="bell_btn", help="AI 主动消息（点击立即查看）")
+with input_col:
+    user_input = st.chat_input("输入消息...")
+
+# 铃铛红点动态控制
+if st.session_state.auto_message_pending:
+    st.markdown("""
+        <style>
+        button[data-st-key="bell_btn"]::after {
+            display: block !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+if bell_clicked:
+    if st.session_state.auto_message_pending:
+        send_auto_message_now()
+        st.rerun()
 
 # ===================== 用户输入处理 =====================
 if user_input:
