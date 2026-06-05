@@ -115,12 +115,51 @@ def typewriter(ph, text, speed):
         time.sleep(speed)
     ph.markdown(text)
 
-# ---------- 段落切割 ----------
-def split_paras(text):
-    paras = re.split(r'\n{2,}', text.strip())
-    return [p.strip() for p in paras if p.strip()] if len(paras)>1 else [text]
+# ---------- 分段函数（支持随机分段）----------
+def random_split(text, min_len, max_len):
+    """将文本随机切割成片段，每段长度在 min_len 和 max_len 之间"""
+    segments = []
+    i = 0
+    n = len(text)
+    while i < n:
+        length = random.randint(min_len, max_len)
+        end = min(i + length, n)
+        segments.append(text[i:end])
+        i = end
+    return segments
 
-# ---------- CSS（气泡+时间标签）----------
+def split_paragraphs(text, panic_mode=None):
+    """根据 panic_mode 中的 segment_mode 选择分段方式"""
+    if not panic_mode:
+        # 默认自然分段
+        paras = re.split(r'\n{2,}', text.strip())
+        return [p.strip() for p in paras if p.strip()] if len(paras) > 1 else [text]
+
+    mode = panic_mode.get("segment_mode", "natural")
+    if mode == "random":
+        max_len = panic_mode.get("max_segment_length", 30)
+        min_len = max(1, max_len // 2)   # 最小长度为最大长度的一半
+        return random_split(text, min_len, max_len)
+    else:
+        # 自然分段
+        paras = re.split(r'\n{2,}', text.strip())
+        return [p.strip() for p in paras if p.strip()] if len(paras) > 1 else [text]
+
+def send_paragraphs(paragraphs, speed):
+    for idx, para in enumerate(paragraphs):
+        with st.chat_message("assistant"):
+            placeholder = st.empty()
+            typewriter(placeholder, para, speed)
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": para,
+            "timestamp": now_beijing_timestamp()
+        })
+        if idx != len(paragraphs) - 1:
+            # 段落间停顿（如果着急模式，间隔已由 speed 控制，但这里可以额外加一点）
+            pass
+
+# ---------- CSS（聊天气泡）----------
 def inject_css():
     st.markdown("""
         <style>
@@ -165,7 +204,7 @@ for k,v in defaults.items():
     if k not in S:
         S[k] = v
 
-def now_ts():
+def now_beijing_timestamp():
     return datetime.now(ZoneInfo("Asia/Shanghai")).timestamp()
 
 # ---------- 主动消息生成与发送 ----------
@@ -195,7 +234,7 @@ def send_auto():
     S.auto_text = ""
     with st.chat_message("assistant"):
         st.markdown(txt)
-    S.msgs.append({"role":"assistant","content":txt,"timestamp":now_ts()})
+    S.msgs.append({"role":"assistant","content":txt,"timestamp":now_beijing_timestamp()})
 
 def build_sys():
     if S.oc_id is None: return ""
@@ -229,18 +268,20 @@ if S.oc_name:
 else:
     st.title("🎭 OC 聊天助手")
 
-# 密码行：标签[密码状态] + 符号 + 清空按钮
-c1, c2, c3 = st.columns([4, 0.5, 1])
-with c1:
-    pw = st.text_input("密码状态", key="oc_pw_input", value=S.oc_pw)
-with c2:
+# 密码行：标签 + 输入框 + 状态符号 + 清空按钮
+col_label, col_input, col_status, col_clear = st.columns([1.5, 4, 0.5, 1])
+with col_label:
+    st.markdown("密码状态：")
+with col_input:
+    pw = st.text_input("", key="oc_pw_input", value=S.oc_pw, label_visibility="collapsed")
+with col_status:
     if S.oc_id is not None:
         st.markdown("✅")
     elif S.pw_error:
         st.markdown("❌")
     else:
         st.write("")
-with c3:
+with col_clear:
     if st.button("🗑️ 清空"):
         for k in defaults: S[k] = defaults[k]
         st.rerun()
@@ -322,37 +363,11 @@ for i, msg in enumerate(S.msgs):
         with st.chat_message("assistant"):
             st.markdown(msg["content"])
 
-# ---------- 铃铛按钮（绝对可靠的红点实现）----------
+# ---------- 铃铛 ----------
 col_a, col_b = st.columns([9,1])
 with col_b:
-    bell = st.button("🔔", key="bell_btn", help="主动消息")
-
-# 红点：直接在按钮后注入 style，使用更强的选择器，确保显示
-if S.auto_pending:
-    st.markdown("""
-        <style>
-        button[data-st-key="bell_btn"]::after {
-            content: "";
-            display: block !important;
-            position: absolute !important;
-            top: 2px !important;
-            right: 2px !important;
-            width: 12px !important;
-            height: 12px !important;
-            background: red !important;
-            border-radius: 50% !important;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-else:
-    # 没有待发消息时，确保隐藏红点（清除可能残留的显示）
-    st.markdown("""
-        <style>
-        button[data-st-key="bell_btn"]::after {
-            display: none !important;
-        }
-        </style>
-    """, unsafe_allow_html=True)
+    bell_label = "🔔" + (" 🔴" if S.auto_pending else "")
+    bell = st.button(bell_label, key="bell_btn", help="主动消息（点击查看）")
 
 if bell and S.auto_pending:
     send_auto()
@@ -373,7 +388,7 @@ if user_input:
     else:
         if S.auto_pending:
             send_auto()
-        S.msgs.append({"role":"user","content":user_input,"read":False,"timestamp":now_ts()})
+        S.msgs.append({"role":"user","content":user_input,"read":False,"timestamp":now_beijing_timestamp()})
         S.last_prompt = user_input
         S.stage = "mark_read"
         st.rerun()
@@ -441,13 +456,13 @@ if S.stage == "generating":
                     if td.function.arguments: tool_calls[td.index]["function"]["arguments"] += td.function.arguments
 
     if tool_calls:
-        S.msgs.append({"role":"assistant","content":None,"tool_calls":tool_calls,"timestamp":now_ts()})
+        S.msgs.append({"role":"assistant","content":None,"tool_calls":tool_calls,"timestamp":now_beijing_timestamp()})
         for tc in tool_calls:
             fname = tc["function"]["name"]
             args = json.loads(tc["function"]["arguments"])
             fn = execs.get(fname)
             res = fn(args) if fn else f"技能 {fname} 未找到"
-            S.msgs.append({"role":"tool","tool_call_id":tc["id"],"content":res,"timestamp":now_ts()})
+            S.msgs.append({"role":"tool","tool_call_id":tc["id"],"content":res,"timestamp":now_beijing_timestamp()})
             with st.chat_message("tool"): st.caption(f"🔧 {fname} → {res}")
         msgs2 = [{"role":"system","content":sys}] if sys else []
         msgs2 += prepare_msgs(S.msgs)
@@ -461,15 +476,14 @@ if S.stage == "generating":
     if full and full.strip():
         full = re.sub(r"\[URGENCY:\d+\.?\d*\]","",full).strip()
         speed = S.oc_speed
+        panic_mode = None
         if urgency >= S.oc_urg_thresh and S.oc_panic:
-            speed *= S.oc_panic.get("speed_multiplier",1.0)
+            speed *= S.oc_panic.get("speed_multiplier", 1.0)
+            panic_mode = S.oc_panic
+
         processed = apply_effects(full, S.oc_typo, S.oc_emoji, S.oc_punct)
-        paras = split_paras(processed)
-        for para in paras:
-            with st.chat_message("assistant"):
-                ph2 = st.empty()
-                typewriter(ph2, para, speed)
-            S.msgs.append({"role":"assistant","content":para,"timestamp":now_ts()})
+        paragraphs = split_paragraphs(processed, panic_mode)
+        send_paragraphs(paragraphs, speed)
 
     if S.auto_prob > 0 and random.random() < S.auto_prob:
         gen_auto()
@@ -477,7 +491,7 @@ if S.stage == "generating":
     S.ai_busy = False; S.stage = None
     if S.queue:
         nxt = S.queue.pop(0)
-        S.msgs.append({"role":"user","content":nxt,"read":False,"timestamp":now_ts()})
+        S.msgs.append({"role":"user","content":nxt,"read":False,"timestamp":now_beijing_timestamp()})
         S.last_prompt = nxt
         S.stage = "mark_read"
     st.rerun()
