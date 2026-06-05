@@ -215,6 +215,22 @@ def inject_css():
         div[data-st-key="auto_timer_trigger"] {
             display: none !important;
         }
+
+        /* 铃铛按钮红点基础样式 */
+        button[data-st-key="bell_btn"] {
+            position: relative;
+        }
+        button[data-st-key="bell_btn"]::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            right: 2px;
+            width: 12px;
+            height: 12px;
+            background: red;
+            border-radius: 50%;
+            display: none; /* 默认隐藏，动态控制 */
+        }
         </style>
     """, unsafe_allow_html=True)
 
@@ -272,19 +288,52 @@ if st.session_state.oc_name:
 else:
     st.title("🎭 OC 聊天助手")
 
-# ===================== 密码与清空 =====================
-col1, col2 = st.columns([4, 1])
+# ===================== 密码与操作按钮行 =====================
+col1, col2, col3 = st.columns([5, 1, 1])
 with col1:
-    password = st.text_input("🔐 OC 密码", value=st.session_state.oc_password)
+    password = st.text_input("🔐 OC 密码", key="oc_password_input", value=st.session_state.oc_password)
 with col2:
-    st.write("")
     if st.button("🗑️ 清空对话"):
         for key in defaults:
             if key in st.session_state:
                 st.session_state[key] = defaults[key]
         st.rerun()
+with col3:
+    bell_clicked = st.button("🔔", key="bell_btn", help="AI 主动消息（点击立即查看）")
 
-# 密码处理（保持不变）
+# 铃铛红点控制
+if st.session_state.auto_message_pending:
+    st.markdown("""
+        <style>
+        button[data-st-key="bell_btn"]::after {
+            display: block !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+# 铃铛点击处理
+if bell_clicked:
+    if st.session_state.auto_message_pending:
+        # 直接发送主动消息
+        send_auto_message_now()
+        st.rerun()
+
+# 密码正确时输入框变绿
+if st.session_state.oc_id is not None:
+    st.markdown("""
+        <style>
+        div[data-st-key="oc_password_input"] input {
+            border-color: #28a745 !important;
+            box-shadow: 0 0 0 1px #28a745 !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+# 密码错误提示
+if st.session_state.oc_password_error:
+    st.error("❌ 密码无效")
+
+# 密码处理
 if password != st.session_state.oc_password:
     st.session_state.oc_password = password
     if password.strip() == "":
@@ -360,11 +409,6 @@ if password != st.session_state.oc_password:
         except ValueError as e:
             st.session_state.oc_id = None
             st.session_state.oc_password_error = str(e)
-
-if st.session_state.oc_password_error:
-    st.error("❌ 密码无效")
-elif st.session_state.oc_id is not None:
-    st.success("✅ 密码有效")
 
 # ===================== System Prompt =====================
 def build_system_content():
@@ -493,7 +537,7 @@ def send_auto_message_now():
         "timestamp": now_beijing_timestamp()
     })
 
-# ===================== 主动消息定时器（隐藏触发输入框） =====================
+# ===================== 主动消息定时器 =====================
 def inject_auto_timer_js():
     if not st.session_state.auto_timer_active or st.session_state.auto_timer_trigger_handled:
         return
@@ -545,66 +589,8 @@ def process_queued_messages():
 # ===================== 渲染历史消息 =====================
 render_messages_with_time()
 
-# ===================== 固定输入框 =====================
+# ===================== 聊天输入框 =====================
 user_input = st.chat_input("输入消息...")
-
-# ===================== 固定铃铛（纯 HTML，不消失） =====================
-# 用 height=60 确保 iframe 区域足够大以显示绝对定位的元素
-bell_html = f"""
-<div id="bell-container" style="
-    position: fixed;
-    bottom: 20px;
-    right: 20px;
-    z-index: 9999;
-    background: white;
-    border-radius: 50%;
-    width: 46px;
-    height: 46px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-    cursor: pointer;
-">
-    <span style="font-size: 26px;">🔔</span>
-    <span id="bell-badge" style="
-        position: absolute;
-        top: 2px;
-        right: 2px;
-        width: 14px;
-        height: 14px;
-        background: red;
-        border-radius: 50%;
-        display: { 'block' if st.session_state.auto_message_pending else 'none' };
-    "></span>
-</div>
-<script>
-const bell = document.getElementById('bell-container');
-bell.addEventListener('click', () => {{
-    const triggerInput = window.parent.document.querySelector('input[aria-label=""]');
-    if (triggerInput) {{
-        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-        nativeInputValueSetter.call(triggerInput, 'bell_clicked_' + Date.now());
-        triggerInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
-    }}
-}});
-</script>
-"""
-st.components.v1.html(bell_html, height=60)
-
-# 处理铃铛点击信号
-if st.session_state.get("auto_timer_trigger") and not st.session_state.auto_timer_trigger_handled:
-    trigger_val = st.session_state.auto_timer_trigger
-    if trigger_val.startswith("bell_clicked_"):
-        st.session_state.auto_timer_trigger = ""  # 清除
-        if st.session_state.auto_message_pending:
-            send_auto_message_now()
-            st.rerun()
-    elif trigger_val.startswith("trigger_"):
-        st.session_state.auto_timer_trigger_handled = True
-        if st.session_state.auto_timer_active and st.session_state.auto_timer_end and time.time() >= st.session_state.auto_timer_end:
-            send_auto_message_now()
-            st.rerun()
 
 # ===================== 用户输入处理 =====================
 if user_input:
