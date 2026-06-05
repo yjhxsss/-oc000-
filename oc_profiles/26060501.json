@@ -11,5 +11,9 @@
   "emoji_rate": 0.3,
   "special_punct": true,
   "unread_probability": 0.08,
+  "auto_message_probability": 0.8,
+"auto_message_delay_min": 15,
+"auto_message_delay_max": 30,
+"auto_message_prompt": "可以问问对方今天心情如何。",
   "consecutive_unread_multiplier": 1.5
 }
