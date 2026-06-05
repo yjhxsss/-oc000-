@@ -143,14 +143,11 @@ def typewriter_effect(placeholder, full_text, speed):
         time.sleep(speed)
     placeholder.markdown(full_text)
 
-# ===================== 分段连续回复（新：独立气泡） =====================
+# ===================== 分段回复（独立聊天气泡） =====================
 def render_segments(final_text, base_speed, panic_mode):
-    """
-    将文本分段，每段用独立聊天气泡展示。
-    返回 True 表示已分段处理（已添加消息到历史），主流程不再重复添加。
-    """
+    """分段输出，每个段落一个 st.chat_message 气泡，并存入历史"""
     if not final_text or panic_mode.get("segment_interval", 0) == 0:
-        return False  # 不需要分段
+        return False
 
     max_len = panic_mode.get("max_segment_length", 30)
     interval = panic_mode.get("segment_interval", 1.5)
@@ -174,12 +171,11 @@ def render_segments(final_text, base_speed, panic_mode):
         segments.append(remaining[:cut+1])
         remaining = remaining[cut+1:].lstrip()
 
-    # 逐个气泡输出并存入历史
+    # 逐个气泡输出
     for i, seg in enumerate(segments):
         with st.chat_message("assistant"):
             placeholder = st.empty()
             typewriter_effect(placeholder, seg, speed)
-        # 存入历史记录
         st.session_state.messages.append({
             "role": "assistant",
             "content": seg,
@@ -187,44 +183,38 @@ def render_segments(final_text, base_speed, panic_mode):
         })
         if i != len(segments) - 1:
             time.sleep(interval)
-    return True  # 已处理
+    return True
 
-# ===================== 聊天气泡CSS =====================
+# ===================== CSS 布局（保留头像，左右对齐） =====================
 def inject_css():
     st.markdown("""
         <style>
-        .stChatMessageContainer {
+        /* 用户消息整体靠右 */
+        div[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) {
             display: flex;
-            flex-direction: column;
+            justify-content: flex-end;
         }
-        div[data-testid="stChatMessage"][aria-label*="user"] {
-            align-self: flex-end;
+        /* AI 消息整体靠左 */
+        div[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) {
+            display: flex;
+            justify-content: flex-start;
+        }
+        /* 气泡样式 */
+        div[data-testid="stChatMessage"] [data-testid="stChatMessageContent"] {
             background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
             border: 2px solid #42a5f5;
             border-radius: 20px;
             padding: 10px 16px;
-            margin: 8px 0;
             max-width: 80%;
             box-shadow: 0 4px 12px rgba(66, 165, 245, 0.2);
-            word-wrap: break-word;
         }
-        div[data-testid="stChatMessage"][aria-label*="assistant"] {
-            align-self: flex-start;
+        /* AI 气泡颜色 */
+        div[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) [data-testid="stChatMessageContent"] {
             background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
-            border: 2px solid #ffa726;
-            border-radius: 20px;
-            padding: 10px 16px;
-            margin: 8px 0;
-            max-width: 80%;
+            border-color: #ffa726;
             box-shadow: 0 4px 12px rgba(255, 167, 38, 0.2);
-            word-wrap: break-word;
         }
-        .read-status {
-            font-size: 0.8em;
-            color: #666;
-            margin-top: 4px;
-            text-align: right;
-        }
+        /* 时间标签 */
         .time-divider {
             text-align: center;
             color: #999;
@@ -441,19 +431,14 @@ def render_messages_with_time():
             prev_time = msg["timestamp"]
 
         if msg["role"] == "user":
-            read_text = "已读" if is_read else "未读"
-            bubble_html = f"""
-            <div class="user-bubble">{msg["content"]}<br>
-            <span class="read-status">{read_text}</span></div>
-            """
-            st.markdown(bubble_html, unsafe_allow_html=True)
+            with st.chat_message("user"):
+                st.markdown(msg["content"])
+                st.caption("已读" if is_read else "未读")
         else:
-            bubble_html = f"""
-            <div class="assistant-bubble">{msg["content"]}</div>
-            """
-            st.markdown(bubble_html, unsafe_allow_html=True)
+            with st.chat_message("assistant"):
+                st.markdown(msg["content"])
 
-# ===================== 主动消息定时器（前端JS） =====================
+# ===================== 主动消息定时器 =====================
 def inject_auto_timer_js():
     if not st.session_state.get("auto_timer_active") or st.session_state.auto_timer_trigger_handled:
         return
@@ -478,7 +463,6 @@ def inject_auto_timer_js():
 
 inject_auto_timer_js()
 
-# 检测定时器触发
 if st.session_state.get("auto_timer_trigger") and not st.session_state.auto_timer_trigger_handled:
     trigger_val = st.session_state.auto_timer_trigger
     if trigger_val.startswith("trigger_"):
@@ -531,7 +515,6 @@ if prompt := st.chat_input("输入消息..."):
         st.error("请先输入有效的 OC 密码")
         st.stop()
 
-    # 取消定时器
     st.session_state.auto_timer_active = False
     st.session_state.auto_timer_end = None
     st.session_state.auto_timer_trigger_handled = False
@@ -570,7 +553,7 @@ if st.session_state.pending_reply:
         st.session_state.pending_reply = False
         st.rerun()
 
-    # ---------- 正常回复流程 ----------
+    # ---------- 正常回复 ----------
     tools, execute_map = load_skills()
     tools = tools if tools else None
 
@@ -581,7 +564,6 @@ if st.session_state.pending_reply:
         messages_for_api.append({"role": "system", "content": system_content})
     messages_for_api.extend(prepare_messages_for_api(st.session_state.messages))
 
-    # 显示“对方正在输入中...”
     with st.chat_message("assistant"):
         typing_placeholder = st.empty()
         typing_placeholder.markdown("对方正在输入中...")
@@ -657,7 +639,6 @@ if st.session_state.pending_reply:
                 final_response += delta.content
         full_response = final_response if final_response else "（工具调用完成，但需要整理语言...）"
 
-    # 清除“对方正在输入中...”
     typing_placeholder.empty()
 
     if full_response and full_response.strip():
@@ -676,10 +657,8 @@ if st.session_state.pending_reply:
         if urgency >= st.session_state.oc_urgency_threshold and panic_mode:
             typo = typo * panic_mode.get("typo_multiplier", 1.0)
             processed = apply_oc_text_effects(full_response, typo, emoji, punct)
-            # 分段输出（内部会添加消息到历史并展示气泡）
             segmented = render_segments(processed, speed, panic_mode)
             if not segmented:
-                # 如果不分段，则走普通流程
                 with st.chat_message("assistant"):
                     placeholder = st.empty()
                     typewriter_effect(placeholder, processed, speed)
@@ -698,11 +677,8 @@ if st.session_state.pending_reply:
                 "content": processed,
                 "timestamp": now_beijing_timestamp()
             })
-    else:
-        # 空回复不添加气泡
-        pass
 
-    # 启动主动消息定时器
+    # 主动消息定时器
     if st.session_state.oc_auto_prob > 0:
         if random.random() < st.session_state.oc_auto_prob:
             delay = random.randint(st.session_state.oc_auto_delay_min, st.session_state.oc_auto_delay_max)
