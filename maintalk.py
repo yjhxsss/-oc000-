@@ -154,7 +154,7 @@ def send_paragraphs(paragraphs, speed):
         if idx != len(paragraphs) - 1:
             time.sleep(0.5)
 
-# ===================== CSS 布局（终极修复） =====================
+# ===================== CSS 布局（彻底修复） =====================
 def inject_css():
     st.markdown("""
         <style>
@@ -191,8 +191,8 @@ def inject_css():
         .time-divider { text-align:center; color:#999; font-size:0.85em; margin:16px 0 8px 0; }
         .typing-indicator { text-align:left; color:#888; font-style:italic; margin:8px 0; }
 
-        /* 固定聊天输入框容器（彻底固定） */
-        div[data-testid="stChatInput"] > div {
+        /* 固定聊天输入框 */
+        div[data-testid="stChatInput"] > div:first-child {
             position: fixed !important;
             bottom: 10px !important;
             left: 50% !important;
@@ -216,17 +216,32 @@ def inject_css():
             display: none !important;
         }
 
-        /* 铃铛按钮红点 */
+        /* 铃铛按钮固定定位（绝对保险） */
         button[data-st-key="bell_btn"] {
-            position: relative;
+            position: fixed !important;
+            bottom: 20px !important;
+            right: 20px !important;
+            z-index: 1001 !important;
+            background: white !important;
+            border: 1px solid #ddd !important;
+            border-radius: 50% !important;
+            width: 46px !important;
+            height: 46px !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15) !important;
+            padding: 0 !important;
+            font-size: 24px !important;
         }
+        /* 铃铛红点（默认隐藏） */
         button[data-st-key="bell_btn"]::after {
             content: '';
             position: absolute;
-            top: 2px;
-            right: 2px;
-            width: 12px;
-            height: 12px;
+            top: 4px;
+            right: 4px;
+            width: 14px;
+            height: 14px;
             background: red;
             border-radius: 50%;
             display: none;
@@ -282,7 +297,7 @@ for k, v in defaults.items():
 def now_beijing_timestamp():
     return datetime.now(ZoneInfo("Asia/Shanghai")).timestamp()
 
-# ===================== 主动消息生成与发送 =====================
+# ===================== 主动消息生成与发送（提前定义） =====================
 def generate_auto_message():
     api_key = get_api_key()
     if not api_key:
@@ -346,9 +361,42 @@ with col2:
                 st.session_state[key] = defaults[key]
         st.rerun()
 with col3:
+    # 铃铛按钮 - 使用固定定位的独立按钮
+    st.markdown("""
+        <style>
+        button[data-st-key="bell_btn"] {
+            position: fixed !important;
+            bottom: 20px !important;
+            right: 20px !important;
+            z-index: 1001 !important;
+            background: white !important;
+            border: 1px solid #ddd !important;
+            border-radius: 50% !important;
+            width: 46px !important;
+            height: 46px !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15) !important;
+            padding: 0 !important;
+            font-size: 24px !important;
+        }
+        button[data-st-key="bell_btn"]::after {
+            content: '';
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            width: 14px;
+            height: 14px;
+            background: red;
+            border-radius: 50%;
+            display: none;
+        }
+        </style>
+    """, unsafe_allow_html=True)
     bell_clicked = st.button("🔔", key="bell_btn", help="AI 主动消息（点击立即查看）")
 
-# 铃铛红点控制
+# 铃铛红点控制（动态注入）
 if st.session_state.auto_message_pending:
     st.markdown("""
         <style>
