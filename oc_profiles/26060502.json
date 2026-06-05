@@ -7,7 +7,7 @@
   ],
   "material": "26060502mmm",
   "typing_speed": 0.06,
-  "typo_style": cool,
+  "typo_style": "cool",
   "typo_rate": 0.01,
   "emoji_rate": 0.01,
   "special_punct": true,
