@@ -117,10 +117,11 @@ def split_paras(text):
     paras = re.split(r'\n{2,}', text.strip())
     return [p.strip() for p in paras if p.strip()] if len(paras)>1 else [text]
 
-# ---------- CSS (仅聊天气泡) ----------
+# ---------- CSS (仅聊天气泡+隐藏触发框) ----------
 def inject_css():
     st.markdown("""
         <style>
+        /* 聊天气泡左右布局 */
         div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-user"]) {
             display:flex !important; justify-content:flex-end !important; flex-direction:row-reverse !important;
         }
@@ -130,15 +131,42 @@ def inject_css():
         div[data-testid="stChatMessageContent"] {
             max-width:70%; border-radius:20px; padding:10px 16px; box-shadow:0 4px 12px rgba(0,0,0,0.1);
         }
-        .user-bubble div[data-testid="stChatMessageContent"] {
+        /* 用户气泡 */
+        div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-user"]) div[data-testid="stChatMessageContent"] {
             background:linear-gradient(135deg,#e3f2fd,#bbdefb); border:2px solid #42a5f5;
             border-radius:20px 6px 20px 20px; margin-left:8px;
         }
-        .assistant-bubble div[data-testid="stChatMessageContent"] {
+        /* AI气泡 */
+        div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-assistant"]) div[data-testid="stChatMessageContent"] {
             background:linear-gradient(135deg,#fff3e0,#ffe0b2); border:2px solid #ffa726;
             border-radius:6px 20px 20px 20px; margin-right:8px;
         }
         .time-divider {text-align:center; color:#999; font-size:0.85em; margin:16px 0 8px 0;}
+
+        /* 彻底隐藏定时器触发输入框 */
+        div[data-st-key="auto_trigger"] {
+            display: none !important;
+            width: 0 !important;
+            height: 0 !important;
+            overflow: hidden !important;
+            position: absolute !important;
+            left: -9999px !important;
+        }
+        /* 铃铛按钮红点基础样式 */
+        button[data-st-key="bell_btn"] {
+            position: relative;
+        }
+        button[data-st-key="bell_btn"]::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            right: 2px;
+            width: 12px;
+            height: 12px;
+            background: red;
+            border-radius: 50%;
+            display: none; /* 默认隐藏，动态显示 */
+        }
         </style>
     """, unsafe_allow_html=True)
 
@@ -229,44 +257,36 @@ if S.oc_name:
 else:
     st.title("🎭 OC 聊天助手")
 
-# 第一行：密码、清空、铃铛
-c1, c2, c3 = st.columns([5,1,1])
+# 密码行
+c1, c2 = st.columns([5,1])
 with c1:
     pw = st.text_input("🔐 OC 密码", key="oc_pw_input", value=S.oc_pw)
 with c2:
     if st.button("🗑️ 清空"):
         for k in defaults: S[k] = defaults[k]
         st.rerun()
-with c3:
-    bell = st.button("🔔", key="bell_btn", help="主动消息")
 
-# 密码正确绿框
+# 密码正确绿框（立即生效）
 if S.oc_id is not None:
-    st.markdown("""<style>div[data-st-key="oc_pw_input"] input{border-color:#28a745!important;box-shadow:0 0 0 1px #28a745!important}</style>""", unsafe_allow_html=True)
+    st.markdown("""
+        <style>
+        div[data-st-key="oc_pw_input"] input {
+            border-color: #28a745 !important;
+            box-shadow: 0 0 0 1px #28a745 !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
 if S.pw_error:
     st.error("❌ 密码无效")
-
-# 铃铛红点
-if S.auto_pending:
-    st.markdown("""<style>button[data-st-key="bell_btn"]::after{content:'';position:absolute;top:2px;right:2px;width:12px;height:12px;background:red;border-radius:50%;display:block}</style>""", unsafe_allow_html=True)
-
-if bell and S.auto_pending:
-    send_auto()
-    st.rerun()
 
 # 密码处理
 if pw != S.oc_pw:
     S.oc_pw = pw
     if pw.strip() == "":
-        S.oc_id = None; S.oc_name = ""; S.oc_base = ""; S.oc_rules = []
-        S.oc_material = None; S.oc_speed = 0.05; S.oc_typo = 0.0; S.oc_emoji = 0.0
-        S.oc_punct = False; S.oc_custom_typo = None; S.oc_style = None
-        S.oc_unread_prob = 0.08; S.oc_unread_mult = 1.0; S.oc_unread_consec = 0
-        S.oc_ignore = []; S.oc_urg_thresh = 0.7; S.oc_panic = {}
-        S.auto_prob = 0.0; S.auto_dmin = 60; S.auto_dmax = 180
-        S.auto_prompt = "你可以偶尔主动聊聊天。"; S.auto_pending = False
-        S.auto_text = ""; S.auto_end = None; S.auto_active = False
-        S.pw_error = ""; S.msgs = []; S.stage = None; S.ai_busy = False; S.queue = []
+        # 重置状态
+        for k in defaults: S[k] = defaults[k]
+        st.rerun()
     else:
         try:
             oid = decode_62(pw)
@@ -307,7 +327,6 @@ prev_t = None
 for i,msg in enumerate(S.msgs):
     if msg["role"] == "tool" or msg.get("silent"): continue
     if msg["role"] == "assistant" and not msg.get("content"): continue
-    # 已读判断
     is_read = False
     if msg["role"] == "user":
         for j in range(i+1, len(S.msgs)):
@@ -315,7 +334,6 @@ for i,msg in enumerate(S.msgs):
             if nxt["role"] in ("assistant","tool"):
                 is_read = True; break
             if nxt["role"] == "user": break
-    # 时间标签
     if prev_t is None or msg["timestamp"] - prev_t >= 1200:
         dt = datetime.fromtimestamp(msg["timestamp"], tz=ZoneInfo("Asia/Shanghai"))
         st.markdown(f'<div class="time-divider">📅 {dt.strftime("%m月%d日 %H:%M")}</div>', unsafe_allow_html=True)
@@ -334,7 +352,6 @@ def inject_timer():
     if S.auto_end is None: return
     remain = max(0, int(S.auto_end - time.time()))
     st.text_input("", key="auto_trigger", label_visibility="collapsed")
-    st.markdown("""<style>div[data-st-key="auto_trigger"]{display:none!important}</style>""", unsafe_allow_html=True)
     js = f"""<script>setTimeout(()=>{{const i=window.parent.document.querySelector('input[aria-label=""]');if(i){{Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set.call(i,'trig_'+Date.now());i.dispatchEvent(new Event('input',{{bubbles:true}}));}}}},{remain*1000});</script>"""
     st.components.v1.html(js, height=0)
 
@@ -344,17 +361,34 @@ if S.get("auto_trigger") and not S.auto_trigger_handled:
         S.auto_trigger_handled = True
         if S.auto_active and S.auto_end and time.time() >= S.auto_end:
             send_auto()
-            S.auto_active = False
             st.rerun()
 
+# 铃铛按钮（放在输入框上方一行，居右）
+col_left, col_right = st.columns([9, 1])
+with col_right:
+    bell = st.button("🔔", key="bell_btn", help="主动消息（点击查看）")
 # 输入框
 user_input = st.chat_input("输入消息...")
 
+# 铃铛红点
+if S.auto_pending:
+    st.markdown("""
+        <style>
+        button[data-st-key="bell_btn"]::after {
+            display: block !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+if bell and S.auto_pending:
+    send_auto()
+    st.rerun()
+
+# 用户输入处理
 if user_input:
     key = get_key()
     if not key: st.error("未配置 API Key"); st.stop()
     if S.oc_id is None: st.error("请先输入有效的 OC 密码"); st.stop()
-    # 取消主动定时器
     S.auto_active = False
     if S.ai_busy:
         S.queue.append(user_input)
@@ -398,7 +432,6 @@ if S.stage == "generating":
     ph = st.empty()
     ph.markdown('<p style="color:#888;font-style:italic;">对方正在输入中...</p>', unsafe_allow_html=True)
 
-    # 急迫度
     urgency = 0.0
     if S.use_ai_urg:
         try:
@@ -457,7 +490,6 @@ if S.stage == "generating":
                 typewriter(ph2, para, speed)
             S.msgs.append({"role":"assistant","content":para,"timestamp":now_ts()})
 
-    # 主动消息概率
     if S.auto_prob > 0 and random.random() < S.auto_prob:
         gen_auto()
         delay = random.randint(S.auto_dmin, S.auto_dmax)
@@ -467,8 +499,7 @@ if S.stage == "generating":
     else:
         S.auto_pending = False; S.auto_active = False
 
-    S.ai_busy = False
-    S.stage = None
+    S.ai_busy = False; S.stage = None
     if S.queue:
         nxt = S.queue.pop(0)
         S.msgs.append({"role":"user","content":nxt,"read":False,"timestamp":now_ts()})
