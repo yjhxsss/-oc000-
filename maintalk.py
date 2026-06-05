@@ -136,17 +136,12 @@ def typewriter_effect(placeholder, full_text, speed):
 
 # ===================== 段落分割 + 独立气泡发送 =====================
 def split_paragraphs(text):
-    """将文本按空行或自然段分割，返回段落列表"""
-    # 先按两个及以上换行符分割
     paragraphs = re.split(r'\n{2,}', text.strip())
     if len(paragraphs) == 1:
-        # 没有空行，尝试按句末标点分句，然后按最大长度组合？按原逻辑保持一个段落。
         return [text]
-    # 过滤掉空段落
     return [p.strip() for p in paragraphs if p.strip()]
 
-def send_paragraphs(paragraphs, speed, panic_mode=None):
-    """依次发送多个段落，每个段落一个独立聊天气泡并存入历史"""
+def send_paragraphs(paragraphs, speed):
     for idx, para in enumerate(paragraphs):
         with st.chat_message("assistant"):
             placeholder = st.empty()
@@ -157,10 +152,9 @@ def send_paragraphs(paragraphs, speed, panic_mode=None):
             "timestamp": now_beijing_timestamp()
         })
         if idx != len(paragraphs) - 1:
-            # 段落间短暂停顿
             time.sleep(0.5)
 
-# ===================== CSS 布局（用户头像在右侧） =====================
+# ===================== CSS 布局 =====================
 def inject_css():
     st.markdown("""
         <style>
@@ -198,7 +192,6 @@ def inject_css():
         </style>
     """, unsafe_allow_html=True)
 
-# ===================== 页面配置 =====================
 st.set_page_config(page_title="OC 聊天助手", page_icon="🎭")
 inject_css()
 
@@ -225,15 +218,15 @@ defaults = {
     "oc_panic_mode": {},
     "oc_auto_prob": 0.0,
     "oc_auto_prompt": "你可以偶尔主动和对方说点有趣的事情。",
-    "auto_message_pending": False,      # 是否有待发送的主动消息
-    "auto_message_text": "",            # 待发送的主动消息内容
+    "auto_message_pending": False,
+    "auto_message_text": "",
     "oc_password_error": "",
     "prev_oc_id": None,
     "pending_reply": False,
     "last_user_prompt": None,
     "oc_use_ai_urgency": False,
-    "ai_output_in_progress": False,     # AI 是否正在输出
-    "queued_user_messages": [],         # 排队中的用户消息
+    "ai_output_in_progress": False,
+    "queued_user_messages": [],
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -264,7 +257,6 @@ with col2:
 if password != st.session_state.oc_password:
     st.session_state.oc_password = password
     if password.strip() == "":
-        # 重置 OC 状态
         for key in ["oc_id","oc_name","oc_base_prompt","oc_forced_rules",
                     "oc_material","oc_custom_typo_dict","oc_typo_style","oc_password_error"]:
             st.session_state[key] = None if key != "oc_forced_rules" else []
@@ -415,9 +407,8 @@ def render_messages_with_time():
             with st.chat_message("assistant"):
                 st.markdown(msg["content"])
 
-# ===================== 主动消息处理 =====================
+# ===================== 主动消息生成 =====================
 def generate_auto_message():
-    """生成一条主动消息并存入待发送状态"""
     api_key = get_api_key()
     if not api_key:
         return
@@ -448,13 +439,11 @@ def generate_auto_message():
         st.session_state.auto_message_pending = True
 
 def send_auto_message_now():
-    """立即发送待送的主动消息，并将其作为普通 assistant 消息存入历史"""
     if not st.session_state.auto_message_pending:
         return
     text = st.session_state.auto_message_text
     st.session_state.auto_message_pending = False
     st.session_state.auto_message_text = ""
-    # 直接作为一条消息添加，无需分段（主动消息通常很短）
     with st.chat_message("assistant"):
         st.markdown(text)
     st.session_state.messages.append({
@@ -463,14 +452,12 @@ def send_auto_message_now():
         "timestamp": now_beijing_timestamp()
     })
 
-# ===================== 消息队列处理 =====================
+# ===================== 队列处理 =====================
 def process_queued_messages():
-    """处理排队中的用户消息，依次触发回复（需等待上一回复完成）"""
     if st.session_state.ai_output_in_progress:
-        return  # 还在输出，不能处理下一个
+        return
     if st.session_state.queued_user_messages:
         next_prompt = st.session_state.queued_user_messages.pop(0)
-        # 添加用户消息（未读）
         st.session_state.messages.append({
             "role": "user",
             "content": next_prompt,
@@ -484,13 +471,13 @@ def process_queued_messages():
 # ===================== 渲染历史消息 =====================
 render_messages_with_time()
 
-# ===================== 聊天输入区域（含主动消息按钮） =====================
+# ===================== 聊天输入区域 =====================
 input_col, btn_col = st.columns([5, 1])
 with input_col:
     user_input = st.chat_input("输入消息...")
 with btn_col:
     if st.session_state.auto_message_pending:
-        if st.button("💬 AI 有新消息", help="点击查看 AI 主动发来的消息"):
+        if st.button("💬 AI 发来消息", help="点击查看 AI 主动消息"):
             send_auto_message_now()
             st.rerun()
 
@@ -504,16 +491,15 @@ if user_input:
         st.error("请先输入有效的 OC 密码")
         st.stop()
 
-    # 如果 AI 正在输出，将用户消息加入队列
+    # AI 正在输出，则加入队列
     if st.session_state.ai_output_in_progress:
         st.session_state.queued_user_messages.append(user_input)
-        st.info("消息已排队，将在 AI 回复结束后处理")
+        st.info("消息已加入排队，等待 AI 回复完成后处理")
         st.rerun()
     else:
         # 如果有待发送的主动消息，先发送它
         if st.session_state.auto_message_pending:
             send_auto_message_now()
-            # 继续处理用户消息（不 return）
         # 添加用户消息
         st.session_state.messages.append({
             "role": "user",
@@ -525,17 +511,18 @@ if user_input:
         st.session_state.pending_reply = True
         st.rerun()
 
-# ===================== 回复生成（pending_reply） =====================
-if st.session_state.pending_reply and not st.session_state.ai_output_in_progress:
-    st.session_state.ai_output_in_progress = True
+# ===================== 处理 pending_reply =====================
+if st.session_state.pending_reply:
     api_key = get_api_key()
     if not api_key:
         st.error("未配置 API Key")
         st.stop()
 
-    # 标记已读
+    # 立即标记已读
     if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
         st.session_state.messages[-1]["read"] = True
+
+    st.session_state.ai_output_in_progress = True
 
     prompt = st.session_state.last_user_prompt
     should_reply = True
@@ -672,27 +659,18 @@ if st.session_state.pending_reply and not st.session_state.ai_output_in_progress
         emoji = st.session_state.oc_emoji_rate
         punct = st.session_state.oc_special_punct
         speed = st.session_state.oc_typing_speed
-        panic_mode = st.session_state.oc_panic_mode
 
         processed = apply_oc_text_effects(full_response, typo, emoji, punct)
-
-        # 根据紧急度调整速度
-        if urgency >= st.session_state.oc_urgency_threshold and panic_mode:
-            speed = speed * panic_mode.get("speed_multiplier", 1.0)
-
-        # 段落分割
+        if urgency >= st.session_state.oc_urgency_threshold and st.session_state.oc_panic_mode:
+            speed = speed * st.session_state.oc_panic_mode.get("speed_multiplier", 1.0)
         paragraphs = split_paragraphs(processed)
-        send_paragraphs(paragraphs, speed, panic_mode)
-    else:
-        # 空回复不处理
-        pass
+        send_paragraphs(paragraphs, speed)
 
     # 主动消息概率
-    if st.session_state.oc_auto_prob > 0:
-        if random.random() < st.session_state.oc_auto_prob:
-            generate_auto_message()
-        else:
-            st.session_state.auto_message_pending = False
+    if st.session_state.oc_auto_prob > 0 and random.random() < st.session_state.oc_auto_prob:
+        generate_auto_message()
+    else:
+        st.session_state.auto_message_pending = False
 
     st.session_state.ai_output_in_progress = False
     st.session_state.pending_reply = False
