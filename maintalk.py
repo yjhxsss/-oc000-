@@ -12,7 +12,7 @@ import importlib
 import pkgutil
 import skills
 
-# ---------- 62进制 ----------
+# ---------- 62进制（完整字符集）----------
 CHARS62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 CHAR_TO_INT = {c: i for i, c in enumerate(CHARS62)}
 
@@ -146,7 +146,6 @@ def send_paragraphs(paragraphs, speed):
         with st.chat_message("assistant"):
             placeholder = st.empty()
             typewriter(placeholder, para, speed)
-        # 修正：使用 S.msgs 而不是 st.session_state.messages
         S.msgs.append({
             "role": "assistant",
             "content": para,
