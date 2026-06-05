@@ -13,16 +13,15 @@ import pkgutil
 import skills
 
 # ---------- 62进制（完整字符集）----------
-CHARS62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-CHAR_TO_INT = {c: i for i, c in enumerate(CHARS62)}
-
 def decode_62(s):
-    num = 0
-    for ch in s:
-        if ch not in CHAR_TO_INT:
-            raise ValueError(f"非法字符 '{ch}'")
-        num = num * 62 + CHAR_TO_INT[ch]
-    return num
+    chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+    val = {c: i for i, c in enumerate(chars)}
+    n = 0
+    for c in s:
+        if c not in val:
+            raise ValueError(f"非法字符: {c}")
+        n = n * 62 + val[c]
+    return n
 
 # ---------- OC 文件 ----------
 OC_DIR = Path("oc_profiles")
