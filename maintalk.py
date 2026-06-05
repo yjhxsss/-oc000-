@@ -154,10 +154,11 @@ def send_paragraphs(paragraphs, speed):
         if idx != len(paragraphs) - 1:
             time.sleep(0.5)
 
-# ===================== CSS 布局 =====================
+# ===================== CSS 布局（仅保留聊天气泡美化，无任何干扰） =====================
 def inject_css():
     st.markdown("""
         <style>
+        /* 聊天消息左右布局 */
         div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-user"]) {
             display: flex !important;
             justify-content: flex-end !important;
@@ -167,6 +168,7 @@ def inject_css():
             display: flex !important;
             justify-content: flex-start !important;
         }
+        /* 聊天气泡内容 */
         div[data-testid="stChatMessage"] [data-testid="stChatMessageContent"] {
             max-width: 70%;
             border-radius: 20px;
@@ -187,16 +189,15 @@ def inject_css():
             margin-left: 0;
             margin-right: 8px;
         }
+        /* 时间标签 */
         .time-divider { text-align:center; color:#999; font-size:0.85em; margin:16px 0 8px 0; }
         .typing-indicator { text-align:left; color:#888; font-style:italic; margin:8px 0; }
-        div[data-testid="stChatInput"] {
-            max-width: 600px;
-            margin: 0 auto;
-        }
+
+        /* 隐藏定时器触发输入框 */
         div[data-st-key="auto_timer_trigger"] {
             display: none !important;
         }
-        /* 铃铛按钮红点 */
+        /* 铃铛红点基础样式（默认隐藏） */
         button[data-st-key="bell_btn"] {
             position: relative;
         }
@@ -315,7 +316,7 @@ if st.session_state.oc_name:
 else:
     st.title("🎭 OC 聊天助手")
 
-# ===================== 密码与清空（无铃铛） =====================
+# ===================== 密码 + 清空 =====================
 col1, col2 = st.columns([5, 1])
 with col1:
     password = st.text_input("🔐 OC 密码", key="oc_password_input", value=st.session_state.oc_password)
@@ -337,7 +338,6 @@ if st.session_state.oc_id is not None:
         </style>
     """, unsafe_allow_html=True)
 
-# 密码错误提示
 if st.session_state.oc_password_error:
     st.error("❌ 密码无效")
 
@@ -550,7 +550,7 @@ def process_queued_messages():
 # ===================== 渲染历史消息 =====================
 render_messages_with_time()
 
-# ===================== 聊天输入区域：铃铛 + 输入框 =====================
+# ===================== 聊天输入区域：铃铛 + 输入框（不再设置宽度约束） =====================
 input_col, bell_col = st.columns([12, 1])
 with bell_col:
     bell_clicked = st.button("🔔", key="bell_btn", help="AI 主动消息（点击立即查看）")
