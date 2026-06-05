@@ -180,14 +180,16 @@ def render_segments(final_text, base_speed, panic_mode):
             time.sleep(interval)
             placeholder = st.empty()
 
-# ===================== 聊天气泡CSS（修复左右布局） =====================
+# ===================== 聊天气泡CSS（flexbox布局） =====================
 def inject_css():
     st.markdown("""
         <style>
-        /* 用户消息框：浮动右侧，清除浮动 */
-        div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-user"]) {
-            float: right;
-            clear: both;
+        .stChatMessageContainer {
+            display: flex;
+            flex-direction: column;
+        }
+        div[data-testid="stChatMessage"][aria-label*="user"] {
+            align-self: flex-end;
             background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
             border: 2px solid #42a5f5;
             border-radius: 20px;
@@ -196,10 +198,8 @@ def inject_css():
             box-shadow: 0 4px 12px rgba(66, 165, 245, 0.25);
             margin-bottom: 12px;
         }
-        /* AI 消息框：浮动左侧 */
-        div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-assistant"]) {
-            float: left;
-            clear: both;
+        div[data-testid="stChatMessage"][aria-label*="assistant"] {
+            align-self: flex-start;
             background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
             border: 2px solid #ffa726;
             border-radius: 20px;
@@ -208,11 +208,12 @@ def inject_css():
             box-shadow: 0 4px 12px rgba(255, 167, 38, 0.25);
             margin-bottom: 12px;
         }
-        /* 清除浮动，防止高度塌陷 */
-        .stChatMessageContainer {
-            overflow: hidden;
+        .time-divider {
+            text-align: center;
+            color: #999;
+            font-size: 0.85em;
+            margin: 16px 0 8px 0;
         }
-        .time-divider { text-align:center; color:#999; font-size:0.85em; margin:16px 0 8px 0; clear: both; }
         </style>
     """, unsafe_allow_html=True)
 
@@ -247,6 +248,7 @@ defaults = {
     "oc_auto_prompt": "你可以偶尔主动和对方说点有趣的事情。",
     "auto_timer_end": None,
     "auto_timer_active": False,
+    "auto_timer_trigger_handled": False,  # 新增
     "oc_password_error": "",
     "prev_oc_id": None,
     "pending_reply": False,
@@ -277,9 +279,10 @@ with col2:
         st.session_state.auto_timer_active = False
         st.session_state.auto_timer_end = None
         st.session_state.pending_reply = False
+        st.session_state.auto_timer_trigger_handled = False
         st.rerun()
 
-# 密码处理
+# 密码处理（保持不变）
 if password != st.session_state.oc_password:
     st.session_state.oc_password = password
     if password.strip() == "":
@@ -299,6 +302,7 @@ if password != st.session_state.oc_password:
         st.session_state.oc_auto_prob = 0.0
         st.session_state.auto_timer_active = False
         st.session_state.auto_timer_end = None
+        st.session_state.auto_timer_trigger_handled = False
         st.session_state.messages = []
         st.session_state.pending_reply = False
     else:
@@ -342,6 +346,7 @@ if password != st.session_state.oc_password:
                     st.session_state.auto_timer_active = False
                     st.session_state.auto_timer_end = None
                     st.session_state.pending_reply = False
+                    st.session_state.auto_timer_trigger_handled = False
                 st.session_state.prev_oc_id = oc_id
             else:
                 st.session_state.oc_id = None
@@ -435,18 +440,23 @@ def render_messages_with_time():
             with st.chat_message("assistant"):
                 st.markdown(msg["content"])
 
-# ---------- 显示历史消息 ----------
 render_messages_with_time()
 
 # ===================== 主动消息定时器（前端JS） =====================
 def inject_auto_timer_js():
-    if not st.session_state.get("auto_timer_active"):
+    if not st.session_state.get("auto_timer_active") or st.session_state.auto_timer_trigger_handled:
         return
     timer_end = st.session_state.auto_timer_end
     if timer_end is None:
         return
     remaining = max(0, int(timer_end - time.time()))
-    st.text_input("", key="auto_timer_trigger", label_visibility="collapsed")
+    # 使用 value 属性控制输入框的显示值，避免直接修改 session_state
+    st.text_input(
+        "",
+        key="auto_timer_trigger",
+        label_visibility="collapsed",
+        value="" if st.session_state.auto_timer_trigger_handled else st.session_state.get("auto_timer_trigger", "")
+    )
     js_code = f"""
     <script>
     setTimeout(() => {{
@@ -463,41 +473,40 @@ def inject_auto_timer_js():
 
 inject_auto_timer_js()
 
-# 检测定时器触发
-if st.session_state.get("auto_timer_trigger"):
+# 检测定时器触发（安全读取，不直接赋值）
+if st.session_state.get("auto_timer_trigger") and not st.session_state.auto_timer_trigger_handled:
     trigger_val = st.session_state.auto_timer_trigger
     if trigger_val.startswith("trigger_"):
-        st.session_state.auto_timer_trigger = ""
-        if st.session_state.auto_timer_active and st.session_state.auto_timer_end:
-            if time.time() >= st.session_state.auto_timer_end:
-                st.session_state.auto_timer_active = False
-                st.session_state.auto_timer_end = None
-                api_key = get_api_key()
-                if api_key:
-                    client = openai.OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
-                    system = build_system_content()
-                    recent = st.session_state.messages[-6:]
-                    msgs = []
-                    if system:
-                        msgs.append({"role":"system","content":system})
-                    msgs.extend(prepare_messages_for_api(recent))
-                    msgs.append({"role":"user","content":f"[内部指令] {st.session_state.oc_auto_prompt} 请直接说出一句主动发起的话题，简短自然。"})
-                    try:
-                        resp = client.chat.completions.create(model="deepseek-chat", messages=msgs, temperature=1.1, max_tokens=100)
-                        content = resp.choices[0].message.content
-                    except:
-                        content = "（突然想找你聊聊天…）"
-                    if content:
-                        typo = st.session_state.oc_typo_rate
-                        emoji = st.session_state.oc_emoji_rate
-                        punct = st.session_state.oc_special_punct
-                        processed = apply_oc_text_effects(content, typo, emoji, punct)
-                        st.session_state.messages.append({
-                            "role": "assistant",
-                            "content": processed,
-                            "timestamp": now_beijing_timestamp()
-                        })
-                st.rerun()
+        if st.session_state.auto_timer_active and st.session_state.auto_timer_end and time.time() >= st.session_state.auto_timer_end:
+            st.session_state.auto_timer_active = False
+            st.session_state.auto_timer_end = None
+            api_key = get_api_key()
+            if api_key:
+                client = openai.OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+                system = build_system_content()
+                recent = st.session_state.messages[-6:]
+                msgs = []
+                if system:
+                    msgs.append({"role":"system","content":system})
+                msgs.extend(prepare_messages_for_api(recent))
+                msgs.append({"role":"user","content":f"[内部指令] {st.session_state.oc_auto_prompt} 请直接说出一句主动发起的话题，简短自然。"})
+                try:
+                    resp = client.chat.completions.create(model="deepseek-chat", messages=msgs, temperature=1.1, max_tokens=100)
+                    content = resp.choices[0].message.content
+                except:
+                    content = "（突然想找你聊聊天…）"
+                if content:
+                    typo = st.session_state.oc_typo_rate
+                    emoji = st.session_state.oc_emoji_rate
+                    punct = st.session_state.oc_special_punct
+                    processed = apply_oc_text_effects(content, typo, emoji, punct)
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": processed,
+                        "timestamp": now_beijing_timestamp()
+                    })
+        st.session_state.auto_timer_trigger_handled = True
+        st.rerun()
 
 # ===================== 聊天输入处理（两阶段） =====================
 if prompt := st.chat_input("输入消息..."):
@@ -509,9 +518,10 @@ if prompt := st.chat_input("输入消息..."):
         st.error("请先输入有效的 OC 密码")
         st.stop()
 
-    if st.session_state.auto_timer_active:
-        st.session_state.auto_timer_active = False
-        st.session_state.auto_timer_end = None
+    # 取消定时器并重置触发状态
+    st.session_state.auto_timer_active = False
+    st.session_state.auto_timer_end = None
+    st.session_state.auto_timer_trigger_handled = False
 
     user_msg = {"role": "user", "content": prompt, "read": False, "timestamp": now_beijing_timestamp()}
     st.session_state.messages.append(user_msg)
@@ -525,7 +535,7 @@ if st.session_state.pending_reply:
         st.error("未配置 API Key")
         st.stop()
 
-    # 立即标记已读
+    # 标记已读
     if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
         st.session_state.messages[-1]["read"] = True
 
@@ -551,7 +561,6 @@ if st.session_state.pending_reply:
         st.session_state.pending_reply = False
         st.rerun()
 
-    # ---------- 正常回复 ----------
     tools, execute_map = load_skills()
     tools = tools if tools else None
 
