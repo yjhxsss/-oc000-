@@ -117,7 +117,6 @@ def typewriter(ph, text, speed):
 
 # ---------- 分段函数（支持随机分段）----------
 def random_split(text, min_len, max_len):
-    """将文本随机切割成片段，每段长度在 min_len 和 max_len 之间"""
     segments = []
     i = 0
     n = len(text)
@@ -129,19 +128,16 @@ def random_split(text, min_len, max_len):
     return segments
 
 def split_paragraphs(text, panic_mode=None):
-    """根据 panic_mode 中的 segment_mode 选择分段方式"""
     if not panic_mode:
-        # 默认自然分段
         paras = re.split(r'\n{2,}', text.strip())
         return [p.strip() for p in paras if p.strip()] if len(paras) > 1 else [text]
 
     mode = panic_mode.get("segment_mode", "natural")
     if mode == "random":
         max_len = panic_mode.get("max_segment_length", 30)
-        min_len = max(1, max_len // 2)   # 最小长度为最大长度的一半
+        min_len = max(1, max_len // 2)
         return random_split(text, min_len, max_len)
     else:
-        # 自然分段
         paras = re.split(r'\n{2,}', text.strip())
         return [p.strip() for p in paras if p.strip()] if len(paras) > 1 else [text]
 
@@ -150,13 +146,13 @@ def send_paragraphs(paragraphs, speed):
         with st.chat_message("assistant"):
             placeholder = st.empty()
             typewriter(placeholder, para, speed)
-        st.session_state.messages.append({
+        # 修正：使用 S.msgs 而不是 st.session_state.messages
+        S.msgs.append({
             "role": "assistant",
             "content": para,
             "timestamp": now_beijing_timestamp()
         })
         if idx != len(paragraphs) - 1:
-            # 段落间停顿（如果着急模式，间隔已由 speed 控制，但这里可以额外加一点）
             pass
 
 # ---------- CSS（聊天气泡）----------
