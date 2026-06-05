@@ -154,7 +154,7 @@ def send_paragraphs(paragraphs, speed):
         if idx != len(paragraphs) - 1:
             time.sleep(0.5)
 
-# ===================== CSS 布局 =====================
+# ===================== CSS 布局（终极修复） =====================
 def inject_css():
     st.markdown("""
         <style>
@@ -191,8 +191,8 @@ def inject_css():
         .time-divider { text-align:center; color:#999; font-size:0.85em; margin:16px 0 8px 0; }
         .typing-indicator { text-align:left; color:#888; font-style:italic; margin:8px 0; }
 
-        /* 固定聊天输入框（居中窄版） */
-        div[data-testid="stChatInput"] {
+        /* 固定聊天输入框容器（彻底固定） */
+        div[data-testid="stChatInput"] > div {
             position: fixed !important;
             bottom: 10px !important;
             left: 50% !important;
@@ -216,7 +216,7 @@ def inject_css():
             display: none !important;
         }
 
-        /* 铃铛按钮红点基础样式 */
+        /* 铃铛按钮红点 */
         button[data-st-key="bell_btn"] {
             position: relative;
         }
@@ -229,7 +229,7 @@ def inject_css():
             height: 12px;
             background: red;
             border-radius: 50%;
-            display: none; /* 默认隐藏，动态控制 */
+            display: none;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -282,6 +282,53 @@ for k, v in defaults.items():
 def now_beijing_timestamp():
     return datetime.now(ZoneInfo("Asia/Shanghai")).timestamp()
 
+# ===================== 主动消息生成与发送 =====================
+def generate_auto_message():
+    api_key = get_api_key()
+    if not api_key:
+        return
+    try:
+        client = openai.OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+        system = build_system_content()
+        recent = st.session_state.messages[-6:]
+        msgs = []
+        if system:
+            msgs.append({"role":"system","content":system})
+        msgs.extend(prepare_messages_for_api(recent))
+        msgs.append({"role":"user","content":f"[内部指令] {st.session_state.oc_auto_prompt} 请直接说出一句主动发起的话题，简短自然。"})
+        resp = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=msgs,
+            temperature=1.1,
+            max_tokens=100
+        )
+        content = resp.choices[0].message.content
+    except:
+        content = "（突然想找你聊聊天…）"
+    if content:
+        typo = st.session_state.oc_typo_rate
+        emoji = st.session_state.oc_emoji_rate
+        punct = st.session_state.oc_special_punct
+        processed = apply_oc_text_effects(content, typo, emoji, punct)
+        st.session_state.auto_message_text = processed
+        st.session_state.auto_message_pending = True
+
+def send_auto_message_now():
+    if not st.session_state.auto_message_pending:
+        return
+    text = st.session_state.auto_message_text
+    st.session_state.auto_message_pending = False
+    st.session_state.auto_message_text = ""
+    st.session_state.auto_timer_active = False
+    st.session_state.auto_timer_end = None
+    with st.chat_message("assistant"):
+        st.markdown(text)
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": text,
+        "timestamp": now_beijing_timestamp()
+    })
+
 # ===================== 动态标题 =====================
 if st.session_state.oc_name:
     st.title(f"🎭 {st.session_state.oc_name}")
@@ -314,7 +361,6 @@ if st.session_state.auto_message_pending:
 # 铃铛点击处理
 if bell_clicked:
     if st.session_state.auto_message_pending:
-        # 直接发送主动消息
         send_auto_message_now()
         st.rerun()
 
@@ -489,53 +535,6 @@ def render_messages_with_time():
         else:
             with st.chat_message("assistant"):
                 st.markdown(msg["content"])
-
-# ===================== 主动消息生成与发送 =====================
-def generate_auto_message():
-    api_key = get_api_key()
-    if not api_key:
-        return
-    try:
-        client = openai.OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
-        system = build_system_content()
-        recent = st.session_state.messages[-6:]
-        msgs = []
-        if system:
-            msgs.append({"role":"system","content":system})
-        msgs.extend(prepare_messages_for_api(recent))
-        msgs.append({"role":"user","content":f"[内部指令] {st.session_state.oc_auto_prompt} 请直接说出一句主动发起的话题，简短自然。"})
-        resp = client.chat.completions.create(
-            model="deepseek-chat",
-            messages=msgs,
-            temperature=1.1,
-            max_tokens=100
-        )
-        content = resp.choices[0].message.content
-    except:
-        content = "（突然想找你聊聊天…）"
-    if content:
-        typo = st.session_state.oc_typo_rate
-        emoji = st.session_state.oc_emoji_rate
-        punct = st.session_state.oc_special_punct
-        processed = apply_oc_text_effects(content, typo, emoji, punct)
-        st.session_state.auto_message_text = processed
-        st.session_state.auto_message_pending = True
-
-def send_auto_message_now():
-    if not st.session_state.auto_message_pending:
-        return
-    text = st.session_state.auto_message_text
-    st.session_state.auto_message_pending = False
-    st.session_state.auto_message_text = ""
-    st.session_state.auto_timer_active = False
-    st.session_state.auto_timer_end = None
-    with st.chat_message("assistant"):
-        st.markdown(text)
-    st.session_state.messages.append({
-        "role": "assistant",
-        "content": text,
-        "timestamp": now_beijing_timestamp()
-    })
 
 # ===================== 主动消息定时器 =====================
 def inject_auto_timer_js():
