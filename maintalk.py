@@ -169,7 +169,7 @@ def inject_css():
             justify-content: flex-start !important;
         }
         div[data-testid="stChatMessage"] [data-testid="stChatMessageContent"] {
-            max-width: 80%;
+            max-width: 70%;
             border-radius: 20px;
             padding: 10px 16px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.1);
@@ -191,16 +191,20 @@ def inject_css():
         .time-divider { text-align:center; color:#999; font-size:0.85em; margin:16px 0 8px 0; }
         .typing-indicator { text-align:left; color:#888; font-style:italic; margin:8px 0; }
 
-        /* 固定聊天输入框 */
+        /* 固定聊天输入框（居中窄版） */
         div[data-testid="stChatInput"] {
             position: fixed !important;
-            bottom: 0 !important;
-            left: 0 !important;
-            right: 0 !important;
+            bottom: 10px !important;
+            left: 50% !important;
+            transform: translateX(-50%) !important;
+            width: auto !important;
+            max-width: 600px !important;
+            min-width: 300px !important;
             background: white !important;
             z-index: 1000 !important;
-            padding: 10px 20px !important;
+            padding: 8px 12px !important;
             box-shadow: 0 -2px 10px rgba(0,0,0,0.05) !important;
+            border-radius: 12px !important;
         }
         /* 内容区域底部留白 */
         .main .block-container {
@@ -254,7 +258,6 @@ defaults = {
     "oc_use_ai_urgency": False,
     "ai_output_in_progress": False,
     "queued_user_messages": [],
-    "bell_trigger": "",          # 用于接收 HTML 铃铛的点击信号
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -281,7 +284,7 @@ with col2:
                 st.session_state[key] = defaults[key]
         st.rerun()
 
-# 密码处理
+# 密码处理（保持不变）
 if password != st.session_state.oc_password:
     st.session_state.oc_password = password
     if password.strip() == "":
@@ -310,7 +313,6 @@ if password != st.session_state.oc_password:
         st.session_state.reply_stage = None
         st.session_state.ai_output_in_progress = False
         st.session_state.queued_user_messages = []
-        st.session_state.bell_trigger = ""
     else:
         try:
             oc_id = decode_62(password)
@@ -351,7 +353,6 @@ if password != st.session_state.oc_password:
                     st.session_state.queued_user_messages = []
                     st.session_state.auto_timer_end = None
                     st.session_state.auto_timer_active = False
-                    st.session_state.bell_trigger = ""
                 st.session_state.prev_oc_id = oc_id
             else:
                 st.session_state.oc_id = None
@@ -547,30 +548,31 @@ render_messages_with_time()
 # ===================== 固定输入框 =====================
 user_input = st.chat_input("输入消息...")
 
-# ===================== 纯 HTML 铃铛（固定定位，可靠） =====================
+# ===================== 固定铃铛（纯 HTML，不消失） =====================
+# 用 height=60 确保 iframe 区域足够大以显示绝对定位的元素
 bell_html = f"""
 <div id="bell-container" style="
     position: fixed;
-    bottom: 15px;
+    bottom: 20px;
     right: 20px;
-    z-index: 1001;
+    z-index: 9999;
     background: white;
     border-radius: 50%;
-    width: 40px;
-    height: 40px;
+    width: 46px;
+    height: 46px;
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
     cursor: pointer;
 ">
-    <span style="font-size: 24px;">🔔</span>
+    <span style="font-size: 26px;">🔔</span>
     <span id="bell-badge" style="
         position: absolute;
         top: 2px;
         right: 2px;
-        width: 12px;
-        height: 12px;
+        width: 14px;
+        height: 14px;
         background: red;
         border-radius: 50%;
         display: { 'block' if st.session_state.auto_message_pending else 'none' };
@@ -579,7 +581,6 @@ bell_html = f"""
 <script>
 const bell = document.getElementById('bell-container');
 bell.addEventListener('click', () => {{
-    // 找到隐藏的触发输入框并赋值
     const triggerInput = window.parent.document.querySelector('input[aria-label=""]');
     if (triggerInput) {{
         const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
@@ -589,13 +590,13 @@ bell.addEventListener('click', () => {{
 }});
 </script>
 """
-st.components.v1.html(bell_html, height=0)
+st.components.v1.html(bell_html, height=60)
 
-# 检测铃铛点击（通过隐藏输入框触发）
+# 处理铃铛点击信号
 if st.session_state.get("auto_timer_trigger") and not st.session_state.auto_timer_trigger_handled:
     trigger_val = st.session_state.auto_timer_trigger
     if trigger_val.startswith("bell_clicked_"):
-        st.session_state.auto_timer_trigger = ""  # 清除触发信号
+        st.session_state.auto_timer_trigger = ""  # 清除
         if st.session_state.auto_message_pending:
             send_auto_message_now()
             st.rerun()
