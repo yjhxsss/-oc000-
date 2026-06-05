@@ -16,15 +16,15 @@ import skills
 CHARS62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 CHAR_TO_INT = {c: i for i, c in enumerate(CHARS62)}
 
-def decode_62(s: str) -> int:
+def decode_62(s):
     num = 0
     for ch in s:
         if ch not in CHAR_TO_INT:
-            raise ValueError(f"非法字符 '{ch}'，允许的字符：{CHARS62}")
+            raise ValueError(f"非法字符 '{ch}'")
         num = num * 62 + CHAR_TO_INT[ch]
     return num
 
-def encode_62(n: int) -> str:
+def encode_62(n):
     if n == 0:
         return CHARS62[0]
     res = []
@@ -103,7 +103,6 @@ def apply_oc_text_effects(text, typo_rate, emoji_rate, special_punct):
     if not text:
         return text
     typo_dict = get_typo_dict()
-
     if special_punct:
         new_text = ""
         for ch in text:
@@ -112,7 +111,6 @@ def apply_oc_text_effects(text, typo_rate, emoji_rate, special_punct):
             else:
                 new_text += ch
         text = new_text
-
     if typo_rate and typo_rate > 0 and typo_dict:
         words = list(text)
         for i, ch in enumerate(words):
@@ -122,7 +120,6 @@ def apply_oc_text_effects(text, typo_rate, emoji_rate, special_punct):
         for k, v in typo_dict.items():
             if len(k) == 2 and k in text and random.random() < typo_rate:
                 text = text.replace(k, v, 1)
-
     if emoji_rate and emoji_rate > 0:
         sentences = re.split(r'(?<=[。！？.!?…])', text)
         new_sentences = []
@@ -146,16 +143,20 @@ def typewriter_effect(placeholder, full_text, speed):
         time.sleep(speed)
     placeholder.markdown(full_text)
 
-# ===================== 分段连续回复 =====================
+# ===================== 分段连续回复（新：独立气泡） =====================
 def render_segments(final_text, base_speed, panic_mode):
+    """
+    将文本分段，每段用独立聊天气泡展示。
+    返回 True 表示已分段处理（已添加消息到历史），主流程不再重复添加。
+    """
     if not final_text or panic_mode.get("segment_interval", 0) == 0:
-        typewriter_effect(st.empty(), final_text, base_speed)
-        return
+        return False  # 不需要分段
 
     max_len = panic_mode.get("max_segment_length", 30)
     interval = panic_mode.get("segment_interval", 1.5)
     speed = base_speed * panic_mode.get("speed_multiplier", 1.0)
 
+    # 切分段落
     segments = []
     remaining = final_text
     while remaining:
@@ -173,14 +174,22 @@ def render_segments(final_text, base_speed, panic_mode):
         segments.append(remaining[:cut+1])
         remaining = remaining[cut+1:].lstrip()
 
-    placeholder = st.empty()
-    for seg in segments:
-        typewriter_effect(placeholder, seg, speed)
-        if seg != segments[-1]:
-            time.sleep(interval)
+    # 逐个气泡输出并存入历史
+    for i, seg in enumerate(segments):
+        with st.chat_message("assistant"):
             placeholder = st.empty()
+            typewriter_effect(placeholder, seg, speed)
+        # 存入历史记录
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": seg,
+            "timestamp": now_beijing_timestamp()
+        })
+        if i != len(segments) - 1:
+            time.sleep(interval)
+    return True  # 已处理
 
-# ===================== 聊天气泡CSS（flexbox布局） =====================
+# ===================== 聊天气泡CSS =====================
 def inject_css():
     st.markdown("""
         <style>
@@ -193,20 +202,28 @@ def inject_css():
             background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
             border: 2px solid #42a5f5;
             border-radius: 20px;
-            padding: 12px 16px;
+            padding: 10px 16px;
+            margin: 8px 0;
             max-width: 80%;
-            box-shadow: 0 4px 12px rgba(66, 165, 245, 0.25);
-            margin-bottom: 12px;
+            box-shadow: 0 4px 12px rgba(66, 165, 245, 0.2);
+            word-wrap: break-word;
         }
         div[data-testid="stChatMessage"][aria-label*="assistant"] {
             align-self: flex-start;
             background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
             border: 2px solid #ffa726;
             border-radius: 20px;
-            padding: 12px 16px;
+            padding: 10px 16px;
+            margin: 8px 0;
             max-width: 80%;
-            box-shadow: 0 4px 12px rgba(255, 167, 38, 0.25);
-            margin-bottom: 12px;
+            box-shadow: 0 4px 12px rgba(255, 167, 38, 0.2);
+            word-wrap: break-word;
+        }
+        .read-status {
+            font-size: 0.8em;
+            color: #666;
+            margin-top: 4px;
+            text-align: right;
         }
         .time-divider {
             text-align: center;
@@ -248,7 +265,7 @@ defaults = {
     "oc_auto_prompt": "你可以偶尔主动和对方说点有趣的事情。",
     "auto_timer_end": None,
     "auto_timer_active": False,
-    "auto_timer_trigger_handled": False,  # 新增
+    "auto_timer_trigger_handled": False,
     "oc_password_error": "",
     "prev_oc_id": None,
     "pending_reply": False,
@@ -274,12 +291,9 @@ with col1:
 with col2:
     st.write("")
     if st.button("🗑️ 清空对话"):
-        st.session_state.messages = []
-        st.session_state.consecutive_unread_count = 0
-        st.session_state.auto_timer_active = False
-        st.session_state.auto_timer_end = None
-        st.session_state.pending_reply = False
-        st.session_state.auto_timer_trigger_handled = False
+        for key in defaults:
+            if key in st.session_state:
+                st.session_state[key] = defaults[key]
         st.rerun()
 
 # 密码处理（保持不变）
@@ -302,7 +316,6 @@ if password != st.session_state.oc_password:
         st.session_state.oc_auto_prob = 0.0
         st.session_state.auto_timer_active = False
         st.session_state.auto_timer_end = None
-        st.session_state.auto_timer_trigger_handled = False
         st.session_state.messages = []
         st.session_state.pending_reply = False
     else:
@@ -321,24 +334,20 @@ if password != st.session_state.oc_password:
                 st.session_state.oc_special_punct = profile.get("special_punct", False)
                 st.session_state.oc_custom_typo_dict = profile.get("custom_typo_dict", None)
                 st.session_state.oc_typo_style = profile.get("typo_style", None)
-
                 if "unread_probability" in profile:
                     st.session_state.oc_unread_probability = profile["unread_probability"]
                 elif "reply_probability" in profile:
                     st.session_state.oc_unread_probability = 1.0 - profile["reply_probability"]
                 else:
                     st.session_state.oc_unread_probability = 0.08
-
                 st.session_state.oc_consecutive_multiplier = profile.get("consecutive_unread_multiplier", 1.0)
                 st.session_state.oc_ignore_keywords = profile.get("ignore_keywords", [])
                 st.session_state.oc_urgency_threshold = profile.get("urgency_threshold", 0.7)
                 st.session_state.oc_panic_mode = profile.get("panic_mode", {})
-
                 st.session_state.oc_auto_prob = profile.get("auto_message_probability", 0.0)
                 st.session_state.oc_auto_delay_min = profile.get("auto_message_delay_min", 30)
                 st.session_state.oc_auto_delay_max = profile.get("auto_message_delay_max", 120)
                 st.session_state.oc_auto_prompt = profile.get("auto_message_prompt", "你可以偶尔主动和对方说点有趣的事情。")
-
                 st.session_state.oc_password_error = ""
                 st.session_state.consecutive_unread_count = 0
                 if st.session_state.prev_oc_id != oc_id:
@@ -346,7 +355,6 @@ if password != st.session_state.oc_password:
                     st.session_state.auto_timer_active = False
                     st.session_state.auto_timer_end = None
                     st.session_state.pending_reply = False
-                    st.session_state.auto_timer_trigger_handled = False
                 st.session_state.prev_oc_id = oc_id
             else:
                 st.session_state.oc_id = None
@@ -433,14 +441,17 @@ def render_messages_with_time():
             prev_time = msg["timestamp"]
 
         if msg["role"] == "user":
-            with st.chat_message("user"):
-                st.markdown(msg["content"])
-                st.caption("已读" if is_read else "未读")
-        elif msg["role"] == "assistant":
-            with st.chat_message("assistant"):
-                st.markdown(msg["content"])
-
-render_messages_with_time()
+            read_text = "已读" if is_read else "未读"
+            bubble_html = f"""
+            <div class="user-bubble">{msg["content"]}<br>
+            <span class="read-status">{read_text}</span></div>
+            """
+            st.markdown(bubble_html, unsafe_allow_html=True)
+        else:
+            bubble_html = f"""
+            <div class="assistant-bubble">{msg["content"]}</div>
+            """
+            st.markdown(bubble_html, unsafe_allow_html=True)
 
 # ===================== 主动消息定时器（前端JS） =====================
 def inject_auto_timer_js():
@@ -450,13 +461,7 @@ def inject_auto_timer_js():
     if timer_end is None:
         return
     remaining = max(0, int(timer_end - time.time()))
-    # 使用 value 属性控制输入框的显示值，避免直接修改 session_state
-    st.text_input(
-        "",
-        key="auto_timer_trigger",
-        label_visibility="collapsed",
-        value="" if st.session_state.auto_timer_trigger_handled else st.session_state.get("auto_timer_trigger", "")
-    )
+    st.text_input("", key="auto_timer_trigger", label_visibility="collapsed")
     js_code = f"""
     <script>
     setTimeout(() => {{
@@ -473,7 +478,7 @@ def inject_auto_timer_js():
 
 inject_auto_timer_js()
 
-# 检测定时器触发（安全读取，不直接赋值）
+# 检测定时器触发
 if st.session_state.get("auto_timer_trigger") and not st.session_state.auto_timer_trigger_handled:
     trigger_val = st.session_state.auto_timer_trigger
     if trigger_val.startswith("trigger_"):
@@ -508,7 +513,15 @@ if st.session_state.get("auto_timer_trigger") and not st.session_state.auto_time
         st.session_state.auto_timer_trigger_handled = True
         st.rerun()
 
-# ===================== 聊天输入处理（两阶段） =====================
+# ===================== 提前标记已读 =====================
+if st.session_state.pending_reply:
+    if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+        st.session_state.messages[-1]["read"] = True
+
+# 渲染历史消息
+render_messages_with_time()
+
+# ===================== 聊天输入处理 =====================
 if prompt := st.chat_input("输入消息..."):
     api_key = get_api_key()
     if not api_key:
@@ -518,7 +531,7 @@ if prompt := st.chat_input("输入消息..."):
         st.error("请先输入有效的 OC 密码")
         st.stop()
 
-    # 取消定时器并重置触发状态
+    # 取消定时器
     st.session_state.auto_timer_active = False
     st.session_state.auto_timer_end = None
     st.session_state.auto_timer_trigger_handled = False
@@ -534,10 +547,6 @@ if st.session_state.pending_reply:
     if not api_key:
         st.error("未配置 API Key")
         st.stop()
-
-    # 标记已读
-    if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
-        st.session_state.messages[-1]["read"] = True
 
     prompt = st.session_state.last_user_prompt
     should_reply = True
@@ -561,6 +570,7 @@ if st.session_state.pending_reply:
         st.session_state.pending_reply = False
         st.rerun()
 
+    # ---------- 正常回复流程 ----------
     tools, execute_map = load_skills()
     tools = tools if tools else None
 
@@ -571,109 +581,126 @@ if st.session_state.pending_reply:
         messages_for_api.append({"role": "system", "content": system_content})
     messages_for_api.extend(prepare_messages_for_api(st.session_state.messages))
 
+    # 显示“对方正在输入中...”
     with st.chat_message("assistant"):
-        message_placeholder = st.empty()
-        message_placeholder.markdown("对方正在输入中...")
+        typing_placeholder = st.empty()
+        typing_placeholder.markdown("对方正在输入中...")
 
-        full_response = ""
-        tool_calls = []
+    full_response = ""
+    tool_calls = []
 
-        response = client.chat.completions.create(
+    response = client.chat.completions.create(
+        model="deepseek-chat",
+        messages=messages_for_api,
+        tools=tools,
+        stream=True
+    )
+
+    stream_content = ""
+    for chunk in response:
+        delta = chunk.choices[0].delta
+        if delta.content:
+            stream_content += delta.content
+        if delta.tool_calls:
+            for tc_delta in delta.tool_calls:
+                if tc_delta.index >= len(tool_calls):
+                    tool_calls.append({
+                        "id": tc_delta.id,
+                        "type": "function",
+                        "function": {"name": "", "arguments": ""}
+                    })
+                if tc_delta.id:
+                    tool_calls[tc_delta.index]["id"] = tc_delta.id
+                if tc_delta.function:
+                    if tc_delta.function.name:
+                        tool_calls[tc_delta.index]["function"]["name"] = tc_delta.function.name
+                    if tc_delta.function.arguments:
+                        tool_calls[tc_delta.index]["function"]["arguments"] += tc_delta.function.arguments
+
+    if stream_content:
+        full_response = stream_content
+
+    if tool_calls:
+        assistant_tool_msg = {"role": "assistant", "content": None, "tool_calls": tool_calls, "timestamp": now_beijing_timestamp()}
+        st.session_state.messages.append(assistant_tool_msg)
+
+        for tc in tool_calls:
+            func_name = tc["function"]["name"]
+            func_args = json.loads(tc["function"]["arguments"])
+            func = execute_map.get(func_name)
+            if func:
+                result = func(func_args)
+            else:
+                result = f"技能 {func_name} 未找到"
+            st.session_state.messages.append({
+                "role": "tool",
+                "tool_call_id": tc["id"],
+                "content": result,
+                "timestamp": now_beijing_timestamp()
+            })
+            with st.chat_message("tool"):
+                st.caption(f"🔧 {func_name} → {result}")
+
+        messages_for_api = []
+        if system_content:
+            messages_for_api.append({"role": "system", "content": system_content})
+        messages_for_api.extend(prepare_messages_for_api(st.session_state.messages))
+        final_response = ""
+        response2 = client.chat.completions.create(
             model="deepseek-chat",
             messages=messages_for_api,
-            tools=tools,
             stream=True
         )
-
-        stream_content = ""
-        for chunk in response:
+        for chunk in response2:
             delta = chunk.choices[0].delta
             if delta.content:
-                stream_content += delta.content
-            if delta.tool_calls:
-                for tc_delta in delta.tool_calls:
-                    if tc_delta.index >= len(tool_calls):
-                        tool_calls.append({
-                            "id": tc_delta.id,
-                            "type": "function",
-                            "function": {"name": "", "arguments": ""}
-                        })
-                    if tc_delta.id:
-                        tool_calls[tc_delta.index]["id"] = tc_delta.id
-                    if tc_delta.function:
-                        if tc_delta.function.name:
-                            tool_calls[tc_delta.index]["function"]["name"] = tc_delta.function.name
-                        if tc_delta.function.arguments:
-                            tool_calls[tc_delta.index]["function"]["arguments"] += tc_delta.function.arguments
+                final_response += delta.content
+        full_response = final_response if final_response else "（工具调用完成，但需要整理语言...）"
 
-        if stream_content:
-            full_response = stream_content
+    # 清除“对方正在输入中...”
+    typing_placeholder.empty()
 
-        if tool_calls:
-            assistant_tool_msg = {"role": "assistant", "content": None, "tool_calls": tool_calls, "timestamp": now_beijing_timestamp()}
-            st.session_state.messages.append(assistant_tool_msg)
+    if full_response and full_response.strip():
+        urgency = 0.0
+        urgency_match = re.search(r"\[URGENCY:(\d+\.?\d*)\]", full_response)
+        if urgency_match:
+            urgency = float(urgency_match.group(1))
+            full_response = re.sub(r"\[URGENCY:\d+\.?\d*\]", "", full_response).strip()
 
-            for tc in tool_calls:
-                func_name = tc["function"]["name"]
-                func_args = json.loads(tc["function"]["arguments"])
-                func = execute_map.get(func_name)
-                if func:
-                    result = func(func_args)
-                else:
-                    result = f"技能 {func_name} 未找到"
+        typo = st.session_state.oc_typo_rate
+        emoji = st.session_state.oc_emoji_rate
+        punct = st.session_state.oc_special_punct
+        speed = st.session_state.oc_typing_speed
+        panic_mode = st.session_state.oc_panic_mode
+
+        if urgency >= st.session_state.oc_urgency_threshold and panic_mode:
+            typo = typo * panic_mode.get("typo_multiplier", 1.0)
+            processed = apply_oc_text_effects(full_response, typo, emoji, punct)
+            # 分段输出（内部会添加消息到历史并展示气泡）
+            segmented = render_segments(processed, speed, panic_mode)
+            if not segmented:
+                # 如果不分段，则走普通流程
+                with st.chat_message("assistant"):
+                    placeholder = st.empty()
+                    typewriter_effect(placeholder, processed, speed)
                 st.session_state.messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "content": result,
+                    "role": "assistant",
+                    "content": processed,
                     "timestamp": now_beijing_timestamp()
                 })
-                with st.chat_message("tool"):
-                    st.caption(f"🔧 {func_name} → {result}")
-
-            messages_for_api = []
-            if system_content:
-                messages_for_api.append({"role": "system", "content": system_content})
-            messages_for_api.extend(prepare_messages_for_api(st.session_state.messages))
-            final_response = ""
-            response2 = client.chat.completions.create(
-                model="deepseek-chat",
-                messages=messages_for_api,
-                stream=True
-            )
-            for chunk in response2:
-                delta = chunk.choices[0].delta
-                if delta.content:
-                    final_response += delta.content
-            full_response = final_response if final_response else "（工具调用完成，但需要整理语言...）"
-
-        if full_response and full_response.strip():
-            urgency = 0.0
-            urgency_match = re.search(r"\[URGENCY:(\d+\.?\d*)\]", full_response)
-            if urgency_match:
-                urgency = float(urgency_match.group(1))
-                full_response = re.sub(r"\[URGENCY:\d+\.?\d*\]", "", full_response).strip()
-
-            typo = st.session_state.oc_typo_rate
-            emoji = st.session_state.oc_emoji_rate
-            punct = st.session_state.oc_special_punct
-            speed = st.session_state.oc_typing_speed
-            panic_mode = st.session_state.oc_panic_mode
-
-            if urgency >= st.session_state.oc_urgency_threshold and panic_mode:
-                typo = typo * panic_mode.get("typo_multiplier", 1.0)
-                processed = apply_oc_text_effects(full_response, typo, emoji, punct)
-                render_segments(processed, speed, panic_mode)
-            else:
-                processed = apply_oc_text_effects(full_response, typo, emoji, punct)
-                typewriter_effect(message_placeholder, processed, speed)
-
+        else:
+            processed = apply_oc_text_effects(full_response, typo, emoji, punct)
+            with st.chat_message("assistant"):
+                placeholder = st.empty()
+                typewriter_effect(placeholder, processed, speed)
             st.session_state.messages.append({
                 "role": "assistant",
                 "content": processed,
                 "timestamp": now_beijing_timestamp()
             })
-        else:
-            message_placeholder.empty()
+    else:
+        # 空回复不添加气泡
+        pass
 
     # 启动主动消息定时器
     if st.session_state.oc_auto_prob > 0:
