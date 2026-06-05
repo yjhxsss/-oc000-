@@ -12,25 +12,34 @@ import importlib
 import pkgutil
 import skills
 
-# ---------- 36进制工具 ----------
-CHARS36 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-CHAR_TO_INT36 = {c: i for i, c in enumerate(CHARS36)}
+# ---------- 密码转换（数字循环偏移）----------
+SHIFT = 1   # 偏移量，可修改
 
-def decode_36(s):
-    """将36进制字符串解码为十进制整数"""
-    num = 0
-    for ch in s.upper():   # 自动转为大写，避免小写问题
-        if ch not in CHAR_TO_INT36:
-            raise ValueError(f"非法字符 '{ch}'（仅允许0-9, A-Z）")
-        num = num * 36 + CHAR_TO_INT36[ch]
-    return num
+def encode_numeric(n_str, shift=SHIFT):
+    """将数字字符串编码为偏移后的字符串（用于生成密码）"""
+    res = []
+    for ch in n_str:
+        if '0' <= ch <= '9':
+            res.append(str((int(ch) + shift) % 10))
+        else:
+            res.append(ch)
+    return ''.join(res)
+
+def decode_numeric(pw_str, shift=SHIFT):
+    """将偏移密码解码回原数字"""
+    res = []
+    for ch in pw_str:
+        if '0' <= ch <= '9':
+            res.append(str((int(ch) - shift) % 10))
+        else:
+            res.append(ch)
+    return ''.join(res)
 
 # ---------- OC 文件 ----------
 OC_DIR = Path("oc_profiles")
 OC_DIR.mkdir(exist_ok=True)
 
 def load_oc(oc_id):
-    """通过十进制编号加载 OC 配置"""
     f = OC_DIR / f"{oc_id}.json"
     if f.exists():
         with open(f, "r", encoding="utf-8") as fh:
@@ -264,7 +273,7 @@ if S.oc_name:
 else:
     st.title("🎭 OC 聊天助手")
 
-# 密码行：标签 + 输入框 + 状态符号 + 清空按钮
+# 密码行
 col_label, col_input, col_status, col_clear = st.columns([1.5, 4, 0.5, 1])
 with col_label:
     st.markdown("密码状态：")
@@ -285,19 +294,20 @@ with col_clear:
 if S.pw_error:
     st.error("❌ 密码无效")
 
-# 密码处理（36进制解码）
+# 密码处理（数字偏移解码）
 if pw != S.oc_pw:
     S.oc_pw = pw
     if pw.strip() == "":
         for k in defaults: S[k] = defaults[k]
         st.rerun()
     else:
-        try:
-            # 36进制解码
-            oid = decode_36(pw.strip())
-            prof = load_oc(oid)
+        raw = pw.strip()
+        oid_str = decode_numeric(raw)
+        oid_str = re.sub(r'\D', '', oid_str)   # 保留数字
+        if oid_str:
+            prof = load_oc(oid_str)
             if prof:
-                S.oc_id = oid
+                S.oc_id = oid_str
                 S.oc_name = prof.get("name","未命名")
                 S.oc_base = prof.get("base_prompt","")
                 S.oc_rules = prof.get("forced_rules",[])
@@ -320,15 +330,15 @@ if pw != S.oc_pw:
                 S.auto_prompt = prof.get("auto_message_prompt","你可以偶尔主动聊聊天。")
                 S.use_ai_urg = prof.get("use_ai_urgency",False)
                 S.pw_error = ""
-                if S.prev_oc != oid:
+                if S.prev_oc != oid_str:
                     S.msgs = []; S.stage = None; S.ai_busy = False; S.queue = []
-                S.prev_oc = oid
+                S.prev_oc = oid_str
             else:
                 S.oc_id = None
-                S.pw_error = f"未找到 OC 文件 {oid}.json"
-        except ValueError as e:
+                S.pw_error = f"未找到 OC 文件 {oid_str}.json"
+        else:
             S.oc_id = None
-            S.pw_error = str(e)
+            S.pw_error = "密码无效（需包含数字）"
 
 # ---------- 渲染消息 ----------
 prev_t = None
