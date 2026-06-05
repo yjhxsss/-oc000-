@@ -12,22 +12,25 @@ import importlib
 import pkgutil
 import skills
 
-# ---------- 62进制（完整字符集）----------
-def decode_62(s):
-    chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-    val = {c: i for i, c in enumerate(chars)}
-    n = 0
-    for c in s:
-        if c not in val:
-            raise ValueError(f"非法字符: {c}")
-        n = n * 62 + val[c]
-    return n
+# ---------- 36进制工具 ----------
+CHARS36 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+CHAR_TO_INT36 = {c: i for i, c in enumerate(CHARS36)}
+
+def decode_36(s):
+    """将36进制字符串解码为十进制整数"""
+    num = 0
+    for ch in s.upper():   # 自动转为大写，避免小写问题
+        if ch not in CHAR_TO_INT36:
+            raise ValueError(f"非法字符 '{ch}'（仅允许0-9, A-Z）")
+        num = num * 36 + CHAR_TO_INT36[ch]
+    return num
 
 # ---------- OC 文件 ----------
 OC_DIR = Path("oc_profiles")
 OC_DIR.mkdir(exist_ok=True)
 
 def load_oc(oc_id):
+    """通过十进制编号加载 OC 配置"""
     f = OC_DIR / f"{oc_id}.json"
     if f.exists():
         with open(f, "r", encoding="utf-8") as fh:
@@ -114,7 +117,7 @@ def typewriter(ph, text, speed):
         time.sleep(speed)
     ph.markdown(text)
 
-# ---------- 分段函数（支持随机分段）----------
+# ---------- 分段函数 ----------
 def random_split(text, min_len, max_len):
     segments = []
     i = 0
@@ -130,7 +133,6 @@ def split_paragraphs(text, panic_mode=None):
     if not panic_mode:
         paras = re.split(r'\n{2,}', text.strip())
         return [p.strip() for p in paras if p.strip()] if len(paras) > 1 else [text]
-
     mode = panic_mode.get("segment_mode", "natural")
     if mode == "random":
         max_len = panic_mode.get("max_segment_length", 30)
@@ -283,7 +285,7 @@ with col_clear:
 if S.pw_error:
     st.error("❌ 密码无效")
 
-# 密码处理
+# 密码处理（36进制解码）
 if pw != S.oc_pw:
     S.oc_pw = pw
     if pw.strip() == "":
@@ -291,7 +293,8 @@ if pw != S.oc_pw:
         st.rerun()
     else:
         try:
-            oid = decode_62(pw)
+            # 36进制解码
+            oid = decode_36(pw.strip())
             prof = load_oc(oid)
             if prof:
                 S.oc_id = oid
@@ -321,9 +324,11 @@ if pw != S.oc_pw:
                     S.msgs = []; S.stage = None; S.ai_busy = False; S.queue = []
                 S.prev_oc = oid
             else:
-                S.oc_id = None; S.pw_error = f"未找到 OC 文件 {oid}.json"
-        except Exception as e:
-            S.oc_id = None; S.pw_error = str(e)
+                S.oc_id = None
+                S.pw_error = f"未找到 OC 文件 {oid}.json"
+        except ValueError as e:
+            S.oc_id = None
+            S.pw_error = str(e)
 
 # ---------- 渲染消息 ----------
 prev_t = None
