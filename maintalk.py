@@ -180,31 +180,39 @@ def render_segments(final_text, base_speed, panic_mode):
             time.sleep(interval)
             placeholder = st.empty()
 
-# ===================== 聊天气泡CSS =====================
+# ===================== 聊天气泡CSS（修复左右布局） =====================
 def inject_css():
     st.markdown("""
         <style>
-        div[data-testid="stChatMessage"][aria-label*="user"] {
+        /* 用户消息框：浮动右侧，清除浮动 */
+        div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-user"]) {
+            float: right;
+            clear: both;
             background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
             border: 2px solid #42a5f5;
             border-radius: 20px;
             padding: 12px 16px;
-            margin-left: auto !important;
-            margin-right: 0 !important;
             max-width: 80%;
             box-shadow: 0 4px 12px rgba(66, 165, 245, 0.25);
+            margin-bottom: 12px;
         }
-        div[data-testid="stChatMessage"][aria-label*="assistant"] {
+        /* AI 消息框：浮动左侧 */
+        div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-assistant"]) {
+            float: left;
+            clear: both;
             background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
             border: 2px solid #ffa726;
             border-radius: 20px;
             padding: 12px 16px;
-            margin-left: 0 !important;
-            margin-right: auto !important;
             max-width: 80%;
             box-shadow: 0 4px 12px rgba(255, 167, 38, 0.25);
+            margin-bottom: 12px;
         }
-        .time-divider { text-align:center; color:#999; font-size:0.85em; margin:16px 0 8px 0; }
+        /* 清除浮动，防止高度塌陷 */
+        .stChatMessageContainer {
+            overflow: hidden;
+        }
+        .time-divider { text-align:center; color:#999; font-size:0.85em; margin:16px 0 8px 0; clear: both; }
         </style>
     """, unsafe_allow_html=True)
 
@@ -464,7 +472,7 @@ if st.session_state.get("auto_timer_trigger"):
             if time.time() >= st.session_state.auto_timer_end:
                 st.session_state.auto_timer_active = False
                 st.session_state.auto_timer_end = None
-                api_key = get_api_key()   # 这里已正确获取
+                api_key = get_api_key()
                 if api_key:
                     client = openai.OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
                     system = build_system_content()
@@ -512,12 +520,12 @@ if prompt := st.chat_input("输入消息..."):
     st.rerun()
 
 if st.session_state.pending_reply:
-    api_key = get_api_key()        # ← 修复点：在此处获取 API Key
+    api_key = get_api_key()
     if not api_key:
         st.error("未配置 API Key")
         st.stop()
 
-    # 标记已读
+    # 立即标记已读
     if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
         st.session_state.messages[-1]["read"] = True
 
@@ -543,7 +551,7 @@ if st.session_state.pending_reply:
         st.session_state.pending_reply = False
         st.rerun()
 
-    # ---------- 正常回复流程 ----------
+    # ---------- 正常回复 ----------
     tools, execute_map = load_skills()
     tools = tools if tools else None
 
@@ -658,6 +666,7 @@ if st.session_state.pending_reply:
         else:
             message_placeholder.empty()
 
+    # 启动主动消息定时器
     if st.session_state.oc_auto_prob > 0:
         if random.random() < st.session_state.oc_auto_prob:
             delay = random.randint(st.session_state.oc_auto_delay_min, st.session_state.oc_auto_delay_max)
