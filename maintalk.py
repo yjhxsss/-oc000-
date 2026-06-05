@@ -154,11 +154,10 @@ def send_paragraphs(paragraphs, speed):
         if idx != len(paragraphs) - 1:
             time.sleep(0.5)
 
-# ===================== CSS 布局（简洁有效） =====================
+# ===================== CSS 布局 =====================
 def inject_css():
     st.markdown("""
         <style>
-        /* 聊天消息布局 */
         div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-user"]) {
             display: flex !important;
             justify-content: flex-end !important;
@@ -190,17 +189,13 @@ def inject_css():
         }
         .time-divider { text-align:center; color:#999; font-size:0.85em; margin:16px 0 8px 0; }
         .typing-indicator { text-align:left; color:#888; font-style:italic; margin:8px 0; }
-
-        /* 聊天输入框宽度适中 */
         div[data-testid="stChatInput"] {
             max-width: 600px;
             margin: 0 auto;
         }
-        /* 隐藏定时器触发输入框 */
         div[data-st-key="auto_timer_trigger"] {
             display: none !important;
         }
-        /* 铃铛按钮红点 */
         button[data-st-key="bell_btn"] {
             position: relative;
         }
@@ -572,7 +567,7 @@ def process_queued_messages():
 # ===================== 渲染历史消息 =====================
 render_messages_with_time()
 
-# ===================== 聊天输入区域（简洁布局） =====================
+# ===================== 聊天输入框 =====================
 user_input = st.chat_input("输入消息...")
 
 # ===================== 用户输入处理 =====================
