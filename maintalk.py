@@ -154,7 +154,7 @@ def send_paragraphs(paragraphs, speed):
         if idx != len(paragraphs) - 1:
             time.sleep(0.5)
 
-# ===================== CSS 布局 =====================
+# ===================== CSS 布局（固定输入框，绝对定位铃铛） =====================
 def inject_css():
     st.markdown("""
         <style>
@@ -191,34 +191,36 @@ def inject_css():
         .time-divider { text-align:center; color:#999; font-size:0.85em; margin:16px 0 8px 0; }
         .typing-indicator { text-align:left; color:#888; font-style:italic; margin:8px 0; }
 
-        /* 固定输入栏 */
-        .fixed-input-container {
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            background: white;
-            z-index: 100;
-            padding: 10px 20px;
-            box-shadow: 0 -2px 10px rgba(0,0,0,0.05);
-            display: flex;
-            align-items: center;
+        /* 固定聊天输入框 */
+        div[data-testid="stChatInput"] {
+            position: fixed !important;
+            bottom: 0 !important;
+            left: 0 !important;
+            right: 0 !important;
+            background: white !important;
+            z-index: 1000 !important;
+            padding: 10px 20px !important;
+            box-shadow: 0 -2px 10px rgba(0,0,0,0.05) !important;
         }
-        .fixed-input-container .stChatInput {
-            flex: 1;
-            margin-right: 10px;
+        /* 聊天内容区域底部留白，避免被输入框遮挡 */
+        .main .block-container {
+            padding-bottom: 90px !important;
         }
-        /* 铃铛按钮基础样式 */
-        .bell-button {
-            background: none;
-            border: none;
-            font-size: 24px;
-            cursor: pointer;
-            padding: 5px;
-            position: relative;
+
+        /* 铃铛按钮固定在右下角，与输入框右侧对齐 */
+        button[data-st-key="bell_btn"] {
+            position: fixed !important;
+            bottom: 15px !important;
+            right: 20px !important;
+            z-index: 1001 !important;
+            background: none !important;
+            border: none !important;
+            font-size: 24px !important;
+            padding: 5px !important;
+            cursor: pointer !important;
         }
-        /* 红点默认隐藏 */
-        .bell-button::after {
+        /* 铃铛红点（默认隐藏，有消息时显示） */
+        button[data-st-key="bell_btn"]::after {
             content: '';
             position: absolute;
             top: 2px;
@@ -227,11 +229,7 @@ def inject_css():
             height: 10px;
             background: red;
             border-radius: 50%;
-            display: none;  /* 默认隐藏，有消息时动态显示 */
-        }
-        /* 内容区域留出输入栏高度 */
-        .main .block-container {
-            padding-bottom: 100px;
+            display: none;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -521,7 +519,6 @@ def inject_auto_timer_js():
     remaining = max(0, int(timer_end - time.time()))
     # 隐藏的触发输入框（完全不可见）
     st.text_input("", key="auto_timer_trigger", label_visibility="collapsed")
-    # 隐藏该输入框容器的 CSS
     st.markdown("""<style>div[data-st-key="auto_timer_trigger"] { display: none !important; }</style>""", unsafe_allow_html=True)
     js_code = f"""
     <script>
@@ -569,30 +566,25 @@ def process_queued_messages():
 # ===================== 渲染历史消息 =====================
 render_messages_with_time()
 
-# ===================== 聊天输入区域（固定输入框 + 铃铛按钮） =====================
-st.markdown('<div class="fixed-input-container">', unsafe_allow_html=True)
-input_col, bell_col = st.columns([9, 1])
-with input_col:
-    user_input = st.chat_input("输入消息...")
-with bell_col:
-    # 铃铛按钮（通过 key 标识）
-    bell_clicked = st.button("🔔", key="bell_btn", help="AI 主动消息（点击立即查看）")
-    # 如果有待发送消息，显示红点
-    if st.session_state.auto_message_pending:
-        st.markdown("""
-            <style>
-            button[data-st-key="bell_btn"]::after {
-                display: block !important;
-            }
-            </style>
-        """, unsafe_allow_html=True)
-st.markdown('</div>', unsafe_allow_html=True)
+# ===================== 聊天输入框（自动固定，铃铛独立） =====================
+user_input = st.chat_input("输入消息...")
+
+# 铃铛按钮（使用绝对定位，CSS已固定）
+bell_clicked = st.button("🔔", key="bell_btn", help="AI 主动消息（点击立即查看）")
+
+# 红点动态注入
+if st.session_state.auto_message_pending:
+    st.markdown("""
+        <style>
+        button[data-st-key="bell_btn"]::after {
+            display: block !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
 
 if bell_clicked:
     if st.session_state.auto_message_pending:
         send_auto_message_now()
-        st.session_state.auto_timer_active = False
-        st.session_state.auto_timer_end = None
         st.rerun()
 
 # ===================== 用户输入处理 =====================
