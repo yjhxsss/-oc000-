@@ -191,7 +191,7 @@ def inject_css():
         .time-divider { text-align:center; color:#999; font-size:0.85em; margin:16px 0 8px 0; }
         .typing-indicator { text-align:left; color:#888; font-style:italic; margin:8px 0; }
 
-        /* 固定输入栏：输入框 + 铃铛 */
+        /* 固定输入栏 */
         .fixed-input-container {
             position: fixed;
             bottom: 0;
@@ -208,16 +208,26 @@ def inject_css():
             flex: 1;
             margin-right: 10px;
         }
+        /* 铃铛按钮基础样式 */
         .bell-button {
             background: none;
             border: none;
             font-size: 24px;
             cursor: pointer;
             padding: 5px;
+            position: relative;
         }
-        /* 调整输入框宽度 */
-        div[data-testid="stChatInput"] textarea {
-            max-width: 100%;
+        /* 红点默认隐藏 */
+        .bell-button::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            right: 2px;
+            width: 10px;
+            height: 10px;
+            background: red;
+            border-radius: 50%;
+            display: none;  /* 默认隐藏，有消息时动态显示 */
         }
         /* 内容区域留出输入栏高度 */
         .main .block-container {
@@ -251,14 +261,14 @@ defaults = {
     "oc_urgency_threshold": 0.7,
     "oc_panic_mode": {},
     "oc_auto_prob": 0.0,
-    "oc_auto_delay_min": 60,      # 新增：最短等待秒数
-    "oc_auto_delay_max": 180,     # 新增：最长等待秒数
+    "oc_auto_delay_min": 60,
+    "oc_auto_delay_max": 180,
     "oc_auto_prompt": "你可以偶尔主动和对方说点有趣的事情。",
     "auto_message_pending": False,
     "auto_message_text": "",
-    "auto_timer_end": None,       # 定时器结束时间戳
-    "auto_timer_active": False,   # 定时器是否激活
-    "auto_timer_trigger_handled": False,  # 防止重复触发
+    "auto_timer_end": None,
+    "auto_timer_active": False,
+    "auto_timer_trigger_handled": False,
     "oc_password_error": "",
     "prev_oc_id": None,
     "reply_stage": None,
@@ -501,7 +511,7 @@ def send_auto_message_now():
         "timestamp": now_beijing_timestamp()
     })
 
-# ===================== 主动消息定时器（前端JS） =====================
+# ===================== 主动消息定时器（隐藏触发输入框） =====================
 def inject_auto_timer_js():
     if not st.session_state.auto_timer_active or st.session_state.auto_timer_trigger_handled:
         return
@@ -509,8 +519,10 @@ def inject_auto_timer_js():
     if timer_end is None:
         return
     remaining = max(0, int(timer_end - time.time()))
-    # 隐藏输入框用于触发
+    # 隐藏的触发输入框（完全不可见）
     st.text_input("", key="auto_timer_trigger", label_visibility="collapsed")
+    # 隐藏该输入框容器的 CSS
+    st.markdown("""<style>div[data-st-key="auto_timer_trigger"] { display: none !important; }</style>""", unsafe_allow_html=True)
     js_code = f"""
     <script>
     setTimeout(() => {{
@@ -533,7 +545,6 @@ if st.session_state.get("auto_timer_trigger") and not st.session_state.auto_time
     if trigger_val.startswith("trigger_"):
         st.session_state.auto_timer_trigger_handled = True
         if st.session_state.auto_timer_active and st.session_state.auto_timer_end and time.time() >= st.session_state.auto_timer_end:
-            # 倒计时结束，自动发送主动消息
             send_auto_message_now()
             st.session_state.auto_timer_active = False
             st.session_state.auto_timer_end = None
@@ -558,14 +569,23 @@ def process_queued_messages():
 # ===================== 渲染历史消息 =====================
 render_messages_with_time()
 
-# ===================== 聊天输入区域（固定输入框 + 铃铛） =====================
-# 使用容器 + CSS 实现固定
+# ===================== 聊天输入区域（固定输入框 + 铃铛按钮） =====================
 st.markdown('<div class="fixed-input-container">', unsafe_allow_html=True)
 input_col, bell_col = st.columns([9, 1])
 with input_col:
     user_input = st.chat_input("输入消息...")
 with bell_col:
+    # 铃铛按钮（通过 key 标识）
     bell_clicked = st.button("🔔", key="bell_btn", help="AI 主动消息（点击立即查看）")
+    # 如果有待发送消息，显示红点
+    if st.session_state.auto_message_pending:
+        st.markdown("""
+            <style>
+            button[data-st-key="bell_btn"]::after {
+                display: block !important;
+            }
+            </style>
+        """, unsafe_allow_html=True)
 st.markdown('</div>', unsafe_allow_html=True)
 
 if bell_clicked:
@@ -585,7 +605,7 @@ if user_input:
         st.error("请先输入有效的 OC 密码")
         st.stop()
 
-    # 取消任何正在进行的主动消息定时器
+    # 取消主动消息定时器
     st.session_state.auto_timer_active = False
     st.session_state.auto_timer_end = None
 
@@ -768,7 +788,6 @@ if st.session_state.reply_stage == "generating":
     # 主动消息生成及启动定时器
     if st.session_state.oc_auto_prob > 0 and random.random() < st.session_state.oc_auto_prob:
         generate_auto_message()
-        # 启动定时器：60-180 秒后自动发送
         delay = random.randint(st.session_state.oc_auto_delay_min, st.session_state.oc_auto_delay_max)
         st.session_state.auto_timer_end = now_beijing_timestamp() + delay
         st.session_state.auto_timer_active = True
