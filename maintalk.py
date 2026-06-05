@@ -143,12 +143,11 @@ def typewriter_effect(placeholder, full_text, speed):
         time.sleep(speed)
     placeholder.markdown(full_text)
 
-# ===================== 分段回复（独立聊天气泡） =====================
+# ===================== 分段回复（独立气泡） =====================
 def render_segments(final_text, base_speed, panic_mode):
-    """分段输出，每个段落一个 st.chat_message 气泡，并存入历史"""
+    """将长文本分段，每段作为独立聊天气泡输出并存入历史"""
     if not final_text or panic_mode.get("segment_interval", 0) == 0:
         return False
-
     max_len = panic_mode.get("max_segment_length", 30)
     interval = panic_mode.get("segment_interval", 1.5)
     speed = base_speed * panic_mode.get("speed_multiplier", 1.0)
@@ -171,11 +170,12 @@ def render_segments(final_text, base_speed, panic_mode):
         segments.append(remaining[:cut+1])
         remaining = remaining[cut+1:].lstrip()
 
-    # 逐个气泡输出
+    # 为每个段落创建一个聊天气泡
     for i, seg in enumerate(segments):
         with st.chat_message("assistant"):
             placeholder = st.empty()
             typewriter_effect(placeholder, seg, speed)
+        # 立即存入历史，确保 rerun 后保留
         st.session_state.messages.append({
             "role": "assistant",
             "content": seg,
@@ -185,34 +185,36 @@ def render_segments(final_text, base_speed, panic_mode):
             time.sleep(interval)
     return True
 
-# ===================== CSS 布局（保留头像，左右对齐） =====================
+# ===================== CSS 布局（强化左右对齐） =====================
 def inject_css():
     st.markdown("""
         <style>
         /* 用户消息整体靠右 */
-        div[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) {
-            display: flex;
-            justify-content: flex-end;
+        div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-user"]) {
+            display: flex !important;
+            justify-content: flex-end !important;
         }
         /* AI 消息整体靠左 */
-        div[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) {
-            display: flex;
-            justify-content: flex-start;
+        div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-assistant"]) {
+            display: flex !important;
+            justify-content: flex-start !important;
         }
-        /* 气泡样式 */
+        /* 聊天气泡内容样式 */
         div[data-testid="stChatMessage"] [data-testid="stChatMessageContent"] {
-            background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
-            border: 2px solid #42a5f5;
+            max-width: 80%;
             border-radius: 20px;
             padding: 10px 16px;
-            max-width: 80%;
-            box-shadow: 0 4px 12px rgba(66, 165, 245, 0.2);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        /* 用户气泡颜色 */
+        div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-user"]) [data-testid="stChatMessageContent"] {
+            background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+            border: 2px solid #42a5f5;
         }
         /* AI 气泡颜色 */
-        div[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) [data-testid="stChatMessageContent"] {
+        div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-assistant"]) [data-testid="stChatMessageContent"] {
             background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
-            border-color: #ffa726;
-            box-shadow: 0 4px 12px rgba(255, 167, 38, 0.2);
+            border: 2px solid #ffa726;
         }
         /* 时间标签 */
         .time-divider {
@@ -220,6 +222,13 @@ def inject_css():
             color: #999;
             font-size: 0.85em;
             margin: 16px 0 8px 0;
+        }
+        /* 对方正在输入提示样式 */
+        .typing-indicator {
+            text-align: left;
+            color: #888;
+            font-style: italic;
+            margin: 8px 0;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -286,7 +295,7 @@ with col2:
                 st.session_state[key] = defaults[key]
         st.rerun()
 
-# 密码处理（保持不变）
+# 密码处理
 if password != st.session_state.oc_password:
     st.session_state.oc_password = password
     if password.strip() == "":
@@ -564,9 +573,9 @@ if st.session_state.pending_reply:
         messages_for_api.append({"role": "system", "content": system_content})
     messages_for_api.extend(prepare_messages_for_api(st.session_state.messages))
 
-    with st.chat_message("assistant"):
-        typing_placeholder = st.empty()
-        typing_placeholder.markdown("对方正在输入中...")
+    # 显示“对方正在输入中...”提示（不占用聊天气泡）
+    typing_placeholder = st.empty()
+    typing_placeholder.markdown('<p class="typing-indicator">对方正在输入中...</p>', unsafe_allow_html=True)
 
     full_response = ""
     tool_calls = []
@@ -639,6 +648,7 @@ if st.session_state.pending_reply:
                 final_response += delta.content
         full_response = final_response if final_response else "（工具调用完成，但需要整理语言...）"
 
+    # 清除“对方正在输入中...”提示
     typing_placeholder.empty()
 
     if full_response and full_response.strip():
@@ -659,6 +669,7 @@ if st.session_state.pending_reply:
             processed = apply_oc_text_effects(full_response, typo, emoji, punct)
             segmented = render_segments(processed, speed, panic_mode)
             if not segmented:
+                # 不分段时正常输出
                 with st.chat_message("assistant"):
                     placeholder = st.empty()
                     typewriter_effect(placeholder, processed, speed)
