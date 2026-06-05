@@ -154,10 +154,11 @@ def send_paragraphs(paragraphs, speed):
         if idx != len(paragraphs) - 1:
             time.sleep(0.5)
 
-# ===================== CSS 布局 =====================
+# ===================== CSS 布局（头像在右、输入框固定、铃铛红点） =====================
 def inject_css():
     st.markdown("""
         <style>
+        /* 聊天消息布局 */
         div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-user"]) {
             display: flex !important;
             justify-content: flex-end !important;
@@ -189,9 +190,49 @@ def inject_css():
         }
         .time-divider { text-align:center; color:#999; font-size:0.85em; margin:16px 0 8px 0; }
         .typing-indicator { text-align:left; color:#888; font-style:italic; margin:8px 0; }
+
+        /* 固定输入框 */
+        div[data-testid="stChatInput"] {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: white;
+            z-index: 100;
+            padding: 10px 20px;
+            box-shadow: 0 -2px 10px rgba(0,0,0,0.05);
+        }
+        /* 给聊天区域留出底部空间 */
+        .main .block-container {
+            padding-bottom: 80px;
+        }
+
+        /* 铃铛按钮样式 */
+        .bell-btn {
+            position: relative;
+            font-size: 24px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 5px;
+        }
+        .bell-btn .badge {
+            position: absolute;
+            top: -5px;
+            right: -5px;
+            width: 12px;
+            height: 12px;
+            background: red;
+            border-radius: 50%;
+            display: none;
+        }
+        .bell-btn.has-notification .badge {
+            display: block;
+        }
         </style>
     """, unsafe_allow_html=True)
 
+# ===================== 页面配置 =====================
 st.set_page_config(page_title="OC 聊天助手", page_icon="🎭")
 inject_css()
 
@@ -222,7 +263,7 @@ defaults = {
     "auto_message_text": "",
     "oc_password_error": "",
     "prev_oc_id": None,
-    "pending_reply": False,
+    "reply_stage": None,          # None, "mark_read", "generating"
     "last_user_prompt": None,
     "oc_use_ai_urgency": False,
     "ai_output_in_progress": False,
@@ -275,7 +316,7 @@ if password != st.session_state.oc_password:
         st.session_state.auto_message_pending = False
         st.session_state.auto_message_text = ""
         st.session_state.messages = []
-        st.session_state.pending_reply = False
+        st.session_state.reply_stage = None
         st.session_state.ai_output_in_progress = False
         st.session_state.queued_user_messages = []
     else:
@@ -311,7 +352,7 @@ if password != st.session_state.oc_password:
                 st.session_state.consecutive_unread_count = 0
                 if st.session_state.prev_oc_id != oc_id:
                     st.session_state.messages = []
-                    st.session_state.pending_reply = False
+                    st.session_state.reply_stage = None
                     st.session_state.ai_output_in_progress = False
                     st.session_state.queued_user_messages = []
                 st.session_state.prev_oc_id = oc_id
@@ -378,6 +419,7 @@ def render_messages_with_time():
             if msg.get("read"):
                 is_read = True
             else:
+                # 动态检查后续是否有回复
                 for j in range(i + 1, len(st.session_state.messages)):
                     nxt = st.session_state.messages[j]
                     if nxt["role"] in ("assistant", "tool"):
@@ -465,19 +507,40 @@ def process_queued_messages():
             "timestamp": now_beijing_timestamp()
         })
         st.session_state.last_user_prompt = next_prompt
-        st.session_state.pending_reply = True
+        st.session_state.reply_stage = "mark_read"
         st.rerun()
 
 # ===================== 渲染历史消息 =====================
 render_messages_with_time()
 
-# ===================== 聊天输入区域 =====================
-input_col, btn_col = st.columns([5, 1])
+# ===================== 聊天输入区域（含铃铛按钮） =====================
+input_col, bell_col = st.columns([10, 1])
 with input_col:
     user_input = st.chat_input("输入消息...")
-with btn_col:
+with bell_col:
+    # 铃铛按钮，带红点
+    bell_label = "🔔"
     if st.session_state.auto_message_pending:
-        if st.button("💬 AI 发来消息", help="点击查看 AI 主动消息"):
+        bell_label = "🔔"  # 红点用CSS实现
+    bell_clicked = st.button(bell_label, key="bell_btn", help="查看 AI 主动消息")
+    # 注入CSS动态控制红点
+    if st.session_state.auto_message_pending:
+        st.markdown("""
+            <style>
+            div[data-testid="stHorizontalBlock"]:last-child button:last-child::after {
+                content: '';
+                position: absolute;
+                top: 2px;
+                right: 2px;
+                width: 10px;
+                height: 10px;
+                background: red;
+                border-radius: 50%;
+            }
+            </style>
+        """, unsafe_allow_html=True)
+    if bell_clicked:
+        if st.session_state.auto_message_pending:
             send_auto_message_now()
             st.rerun()
 
@@ -491,16 +554,16 @@ if user_input:
         st.error("请先输入有效的 OC 密码")
         st.stop()
 
-    # AI 正在输出，则加入队列
+    # 如果 AI 正在输出，加入队列
     if st.session_state.ai_output_in_progress:
         st.session_state.queued_user_messages.append(user_input)
         st.info("消息已加入排队，等待 AI 回复完成后处理")
         st.rerun()
     else:
-        # 如果有待发送的主动消息，先发送它
+        # 如果有待发送的主动消息，先发送
         if st.session_state.auto_message_pending:
             send_auto_message_now()
-        # 添加用户消息
+        # 添加用户消息（未读）
         st.session_state.messages.append({
             "role": "user",
             "content": user_input,
@@ -508,21 +571,22 @@ if user_input:
             "timestamp": now_beijing_timestamp()
         })
         st.session_state.last_user_prompt = user_input
-        st.session_state.pending_reply = True
+        st.session_state.reply_stage = "mark_read"
         st.rerun()
 
-# ===================== 处理 pending_reply =====================
-if st.session_state.pending_reply:
+# ===================== 两阶段处理：先标记已读，再生成回复 =====================
+if st.session_state.reply_stage == "mark_read":
+    # 标记最后一条用户消息为已读
+    if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+        st.session_state.messages[-1]["read"] = True
+    st.session_state.reply_stage = "generating"
+    st.rerun()
+
+if st.session_state.reply_stage == "generating":
     api_key = get_api_key()
     if not api_key:
         st.error("未配置 API Key")
         st.stop()
-
-    # 立即标记已读
-    if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
-        st.session_state.messages[-1]["read"] = True
-
-    st.session_state.ai_output_in_progress = True
 
     prompt = st.session_state.last_user_prompt
     should_reply = True
@@ -544,11 +608,12 @@ if st.session_state.pending_reply:
 
     if not should_reply:
         st.session_state.ai_output_in_progress = False
-        st.session_state.pending_reply = False
+        st.session_state.reply_stage = None
         process_queued_messages()
         st.rerun()
 
     # ---------- 正常回复 ----------
+    st.session_state.ai_output_in_progress = True
     tools, execute_map = load_skills()
     tools = tools if tools else None
 
@@ -673,6 +738,6 @@ if st.session_state.pending_reply:
         st.session_state.auto_message_pending = False
 
     st.session_state.ai_output_in_progress = False
-    st.session_state.pending_reply = False
+    st.session_state.reply_stage = None
     process_queued_messages()
     st.rerun()
