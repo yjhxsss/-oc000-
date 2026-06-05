@@ -180,25 +180,29 @@ def render_segments(final_text, base_speed, panic_mode):
             time.sleep(interval)
             placeholder = st.empty()
 
-# ===================== 聊天气泡CSS =====================
+# ===================== 聊天气泡CSS（修复左右布局） =====================
 def inject_css():
     st.markdown("""
         <style>
-        .stChatMessage [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) {
+        /* 用户消息靠右 */
+        div[data-testid="stChatMessage"][aria-label*="user"] {
             background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
             border: 2px solid #42a5f5;
             border-radius: 20px;
             padding: 12px 16px;
-            margin: 12px 0 12px auto;
+            margin-left: auto !important;
+            margin-right: 0 !important;
             max-width: 80%;
             box-shadow: 0 4px 12px rgba(66, 165, 245, 0.25);
         }
-        .stChatMessage [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) {
+        /* AI 消息靠左 */
+        div[data-testid="stChatMessage"][aria-label*="assistant"] {
             background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
             border: 2px solid #ffa726;
             border-radius: 20px;
             padding: 12px 16px;
-            margin: 12px auto 12px 0;
+            margin-left: 0 !important;
+            margin-right: auto !important;
             max-width: 80%;
             box-shadow: 0 4px 12px rgba(255, 167, 38, 0.25);
         }
@@ -239,6 +243,8 @@ defaults = {
     "auto_timer_active": False,
     "oc_password_error": "",
     "prev_oc_id": None,
+    "pending_reply": False,          # 用于分步处理用户消息
+    "last_user_prompt": None,        # 暂存用户输入
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -264,6 +270,7 @@ with col2:
         st.session_state.consecutive_unread_count = 0
         st.session_state.auto_timer_active = False
         st.session_state.auto_timer_end = None
+        st.session_state.pending_reply = False
         st.rerun()
 
 # 密码处理
@@ -287,6 +294,7 @@ if password != st.session_state.oc_password:
         st.session_state.auto_timer_active = False
         st.session_state.auto_timer_end = None
         st.session_state.messages = []
+        st.session_state.pending_reply = False
     else:
         try:
             oc_id = decode_62(password)
@@ -327,6 +335,7 @@ if password != st.session_state.oc_password:
                     st.session_state.messages = []
                     st.session_state.auto_timer_active = False
                     st.session_state.auto_timer_end = None
+                    st.session_state.pending_reply = False
                 st.session_state.prev_oc_id = oc_id
             else:
                 st.session_state.oc_id = None
@@ -368,7 +377,7 @@ def prepare_messages_for_api(session_messages):
         if msg.get("silent"):
             continue
         new_msg = {"role": msg["role"]}
-        if "content" in msg:
+        if "content" in msg and msg["content"] is not None:
             new_msg["content"] = msg["content"]
         if "tool_calls" in msg:
             new_msg["tool_calls"] = msg["tool_calls"]
@@ -383,15 +392,24 @@ def render_messages_with_time():
     for i, msg in enumerate(st.session_state.messages):
         if msg["role"] == "tool" or msg.get("silent"):
             continue
+        # 跳过空内容的助手消息（防止None显示）
+        if msg["role"] == "assistant" and not msg.get("content"):
+            continue
+
         is_read = False
         if msg["role"] == "user":
-            for j in range(i + 1, len(st.session_state.messages)):
-                nxt = st.session_state.messages[j]
-                if nxt["role"] in ("assistant", "tool"):
-                    is_read = True
-                    break
-                if nxt["role"] == "user":
-                    break
+            # 如果消息自带read为True，则已读；否则检查后续是否有AI回复
+            if msg.get("read"):
+                is_read = True
+            else:
+                for j in range(i + 1, len(st.session_state.messages)):
+                    nxt = st.session_state.messages[j]
+                    if nxt["role"] in ("assistant", "tool"):
+                        is_read = True
+                        break
+                    if nxt["role"] == "user":
+                        break
+
         show_time = False
         if prev_time is None:
             show_time = True
@@ -404,6 +422,7 @@ def render_messages_with_time():
             time_str = dt.strftime("%m月%d日 %H:%M")
             st.markdown(f'<div class="time-divider">📅 {time_str}</div>', unsafe_allow_html=True)
             prev_time = msg["timestamp"]
+
         if msg["role"] == "user":
             with st.chat_message("user"):
                 st.markdown(msg["content"])
@@ -464,18 +483,20 @@ if st.session_state.get("auto_timer_trigger"):
                         content = resp.choices[0].message.content
                     except:
                         content = "（突然想找你聊聊天…）"
-                    typo = st.session_state.oc_typo_rate
-                    emoji = st.session_state.oc_emoji_rate
-                    punct = st.session_state.oc_special_punct
-                    processed = apply_oc_text_effects(content, typo, emoji, punct)
-                    st.session_state.messages.append({
-                        "role": "assistant",
-                        "content": processed,
-                        "timestamp": now_beijing_timestamp()
-                    })
+                    if content:
+                        typo = st.session_state.oc_typo_rate
+                        emoji = st.session_state.oc_emoji_rate
+                        punct = st.session_state.oc_special_punct
+                        processed = apply_oc_text_effects(content, typo, emoji, punct)
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": processed,
+                            "timestamp": now_beijing_timestamp()
+                        })
                 st.rerun()
 
-# ===================== 聊天输入处理 =====================
+# ===================== 聊天输入处理（两阶段） =====================
+# 第一阶段：捕获用户输入，添加消息（未读），并设置 pending_reply
 if prompt := st.chat_input("输入消息..."):
     api_key = get_api_key()
     if not api_key:
@@ -490,13 +511,22 @@ if prompt := st.chat_input("输入消息..."):
         st.session_state.auto_timer_active = False
         st.session_state.auto_timer_end = None
 
+    # 添加用户消息（标记未读）
     user_msg = {"role": "user", "content": prompt, "read": False, "timestamp": now_beijing_timestamp()}
     st.session_state.messages.append(user_msg)
-    with st.chat_message("user"):
-        st.markdown(prompt)
-        st.caption("未读")
+    st.session_state.last_user_prompt = prompt
+    st.session_state.pending_reply = True
+    st.rerun()
 
-    # 判断是否应忽略回复
+# 第二阶段：处理 pending_reply，标记已读并生成回复
+if st.session_state.pending_reply:
+    # 先将最后一条用户消息标记为已读
+    if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+        st.session_state.messages[-1]["read"] = True
+
+    # 现在界面会显示已读（因为在 rerun 后 render_messages_with_time 会看到 read=True）
+    # 判断是否应回复
+    prompt = st.session_state.last_user_prompt
     should_reply = True
     if st.session_state.oc_ignore_keywords:
         if any(kw in prompt for kw in st.session_state.oc_ignore_keywords):
@@ -515,6 +545,7 @@ if prompt := st.chat_input("输入消息..."):
             st.session_state.consecutive_unread_count = 0
 
     if not should_reply:
+        st.session_state.pending_reply = False
         st.rerun()
 
     # ---------- 正常回复流程 ----------
@@ -606,8 +637,8 @@ if prompt := st.chat_input("输入消息..."):
             full_response = final_response if final_response else "（工具调用完成，但需要整理语言...）"
 
         # 应用特效并输出（可能包含着急模式）
-        if full_response:
-            # 急迫指数检测：从回复中提取隐藏标记 [URGENCY:0.xx]
+        if full_response and full_response.strip():
+            # 急迫指数检测
             urgency = 0.0
             urgency_match = re.search(r"\[URGENCY:(\d+\.?\d*)\]", full_response)
             if urgency_match:
@@ -622,7 +653,6 @@ if prompt := st.chat_input("输入消息..."):
 
             if urgency >= st.session_state.oc_urgency_threshold and panic_mode:
                 typo = typo * panic_mode.get("typo_multiplier", 1.0)
-                # speed在render_segments中会乘以speed_multiplier
                 processed = apply_oc_text_effects(full_response, typo, emoji, punct)
                 render_segments(processed, speed, panic_mode)
             else:
@@ -635,11 +665,7 @@ if prompt := st.chat_input("输入消息..."):
                 "timestamp": now_beijing_timestamp()
             })
         else:
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": "",
-                "timestamp": now_beijing_timestamp()
-            })
+            # 空回复不添加，避免None框
             message_placeholder.empty()
 
     # 启动主动消息定时器
@@ -654,4 +680,5 @@ if prompt := st.chat_input("输入消息..."):
     else:
         st.session_state.auto_timer_active = False
 
+    st.session_state.pending_reply = False
     st.rerun()
