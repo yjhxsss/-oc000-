@@ -180,11 +180,10 @@ def render_segments(final_text, base_speed, panic_mode):
             time.sleep(interval)
             placeholder = st.empty()
 
-# ===================== 聊天气泡CSS（修复左右布局） =====================
+# ===================== 聊天气泡CSS =====================
 def inject_css():
     st.markdown("""
         <style>
-        /* 用户消息靠右 */
         div[data-testid="stChatMessage"][aria-label*="user"] {
             background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
             border: 2px solid #42a5f5;
@@ -195,7 +194,6 @@ def inject_css():
             max-width: 80%;
             box-shadow: 0 4px 12px rgba(66, 165, 245, 0.25);
         }
-        /* AI 消息靠左 */
         div[data-testid="stChatMessage"][aria-label*="assistant"] {
             background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
             border: 2px solid #ffa726;
@@ -243,8 +241,8 @@ defaults = {
     "auto_timer_active": False,
     "oc_password_error": "",
     "prev_oc_id": None,
-    "pending_reply": False,          # 用于分步处理用户消息
-    "last_user_prompt": None,        # 暂存用户输入
+    "pending_reply": False,
+    "last_user_prompt": None,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -392,13 +390,11 @@ def render_messages_with_time():
     for i, msg in enumerate(st.session_state.messages):
         if msg["role"] == "tool" or msg.get("silent"):
             continue
-        # 跳过空内容的助手消息（防止None显示）
         if msg["role"] == "assistant" and not msg.get("content"):
             continue
 
         is_read = False
         if msg["role"] == "user":
-            # 如果消息自带read为True，则已读；否则检查后续是否有AI回复
             if msg.get("read"):
                 is_read = True
             else:
@@ -468,7 +464,7 @@ if st.session_state.get("auto_timer_trigger"):
             if time.time() >= st.session_state.auto_timer_end:
                 st.session_state.auto_timer_active = False
                 st.session_state.auto_timer_end = None
-                api_key = get_api_key()
+                api_key = get_api_key()   # 这里已正确获取
                 if api_key:
                     client = openai.OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
                     system = build_system_content()
@@ -496,7 +492,6 @@ if st.session_state.get("auto_timer_trigger"):
                 st.rerun()
 
 # ===================== 聊天输入处理（两阶段） =====================
-# 第一阶段：捕获用户输入，添加消息（未读），并设置 pending_reply
 if prompt := st.chat_input("输入消息..."):
     api_key = get_api_key()
     if not api_key:
@@ -506,26 +501,26 @@ if prompt := st.chat_input("输入消息..."):
         st.error("请先输入有效的 OC 密码")
         st.stop()
 
-    # 取消任何活跃的主动定时器
     if st.session_state.auto_timer_active:
         st.session_state.auto_timer_active = False
         st.session_state.auto_timer_end = None
 
-    # 添加用户消息（标记未读）
     user_msg = {"role": "user", "content": prompt, "read": False, "timestamp": now_beijing_timestamp()}
     st.session_state.messages.append(user_msg)
     st.session_state.last_user_prompt = prompt
     st.session_state.pending_reply = True
     st.rerun()
 
-# 第二阶段：处理 pending_reply，标记已读并生成回复
 if st.session_state.pending_reply:
-    # 先将最后一条用户消息标记为已读
+    api_key = get_api_key()        # ← 修复点：在此处获取 API Key
+    if not api_key:
+        st.error("未配置 API Key")
+        st.stop()
+
+    # 标记已读
     if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
         st.session_state.messages[-1]["read"] = True
 
-    # 现在界面会显示已读（因为在 rerun 后 render_messages_with_time 会看到 read=True）
-    # 判断是否应回复
     prompt = st.session_state.last_user_prompt
     should_reply = True
     if st.session_state.oc_ignore_keywords:
@@ -597,7 +592,6 @@ if st.session_state.pending_reply:
         if stream_content:
             full_response = stream_content
 
-        # 处理工具调用
         if tool_calls:
             assistant_tool_msg = {"role": "assistant", "content": None, "tool_calls": tool_calls, "timestamp": now_beijing_timestamp()}
             st.session_state.messages.append(assistant_tool_msg)
@@ -619,7 +613,6 @@ if st.session_state.pending_reply:
                 with st.chat_message("tool"):
                     st.caption(f"🔧 {func_name} → {result}")
 
-            # 第二次请求
             messages_for_api = []
             if system_content:
                 messages_for_api.append({"role": "system", "content": system_content})
@@ -636,9 +629,7 @@ if st.session_state.pending_reply:
                     final_response += delta.content
             full_response = final_response if final_response else "（工具调用完成，但需要整理语言...）"
 
-        # 应用特效并输出（可能包含着急模式）
         if full_response and full_response.strip():
-            # 急迫指数检测
             urgency = 0.0
             urgency_match = re.search(r"\[URGENCY:(\d+\.?\d*)\]", full_response)
             if urgency_match:
@@ -665,10 +656,8 @@ if st.session_state.pending_reply:
                 "timestamp": now_beijing_timestamp()
             })
         else:
-            # 空回复不添加，避免None框
             message_placeholder.empty()
 
-    # 启动主动消息定时器
     if st.session_state.oc_auto_prob > 0:
         if random.random() < st.session_state.oc_auto_prob:
             delay = random.randint(st.session_state.oc_auto_delay_min, st.session_state.oc_auto_delay_max)
