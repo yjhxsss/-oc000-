@@ -35,7 +35,7 @@ def load_oc(oc_id):
             return json.load(fh)
     return None
 
-# ---------- 技能动态加载 ----------
+# ---------- 技能加载 ----------
 @st.cache_resource
 def load_skills():
     tools = []
@@ -120,65 +120,33 @@ def split_paras(text):
     paras = re.split(r'\n{2,}', text.strip())
     return [p.strip() for p in paras if p.strip()] if len(paras)>1 else [text]
 
-# ---------- CSS（仅聊天气泡+时间标签）----------
+# ---------- CSS（气泡+时间标签）----------
 def inject_css():
     st.markdown("""
         <style>
-        /* 用户消息靠右，头像在右侧 */
         div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-user"]) {
-            display: flex !important;
-            justify-content: flex-end !important;
-            flex-direction: row-reverse !important;
+            display:flex !important; justify-content:flex-end !important; flex-direction:row-reverse !important;
         }
-        /* AI消息靠左 */
         div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-assistant"]) {
-            display: flex !important;
-            justify-content: flex-start !important;
+            display:flex !important; justify-content:flex-start !important;
         }
-        /* 气泡内容 */
-        div[data-testid="stChatMessage"] [data-testid="stChatMessageContent"] {
-            max-width: 70%;
-            border-radius: 20px;
-            padding: 10px 16px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        div[data-testid="stChatMessageContent"] {
+            max-width:70%; border-radius:20px; padding:10px 16px; box-shadow:0 4px 12px rgba(0,0,0,0.1);
         }
-        /* 用户气泡颜色 */
-        div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-user"]) [data-testid="stChatMessageContent"] {
-            background: linear-gradient(135deg, #e3f2fd, #bbdefb);
-            border: 2px solid #42a5f5;
-            border-radius: 20px 6px 20px 20px;
-            margin-right: 0;
-            margin-left: 8px;
+        div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-user"]) div[data-testid="stChatMessageContent"] {
+            background:linear-gradient(135deg,#e3f2fd,#bbdefb); border:2px solid #42a5f5;
+            border-radius:20px 6px 20px 20px; margin-left:8px;
         }
-        /* AI气泡颜色 */
-        div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-assistant"]) [data-testid="stChatMessageContent"] {
-            background: linear-gradient(135deg, #fff3e0, #ffe0b2);
-            border: 2px solid #ffa726;
-            border-radius: 6px 20px 20px 20px;
-            margin-left: 0;
-            margin-right: 8px;
+        div[data-testid="stChatMessage"]:has(div[data-testid="chatAvatarIcon-assistant"]) div[data-testid="stChatMessageContent"] {
+            background:linear-gradient(135deg,#fff3e0,#ffe0b2); border:2px solid #ffa726;
+            border-radius:6px 20px 20px 20px; margin-right:8px;
         }
-        /* 时间标签 */
-        .time-divider {
-            text-align: center;
-            color: #999;
-            font-size: 0.85em;
-            margin: 16px 0 8px 0;
-        }
-        /* 铃铛按钮红点 */
-        button[data-st-key="bell_btn"] {
-            position: relative;
-        }
+        .time-divider {text-align:center; color:#999; font-size:0.85em; margin:16px 0 8px 0;}
+        /* 铃铛红点基础 */
+        button[data-st-key="bell_btn"] {position:relative;}
         button[data-st-key="bell_btn"]::after {
-            content: '';
-            position: absolute;
-            top: 2px;
-            right: 2px;
-            width: 12px;
-            height: 12px;
-            background: red;
-            border-radius: 50%;
-            display: none;
+            content:''; position:absolute; top:2px; right:2px; width:12px; height:12px;
+            background:red; border-radius:50%; display:none;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -206,7 +174,7 @@ for k,v in defaults.items():
 def now_ts():
     return datetime.now(ZoneInfo("Asia/Shanghai")).timestamp()
 
-# ---------- 主动消息生成（仅生成，不自动发送）----------
+# ---------- 主动消息生成与发送 ----------
 def gen_auto():
     key = get_key()
     if not key: return
@@ -235,7 +203,6 @@ def send_auto():
         st.markdown(txt)
     S.msgs.append({"role":"assistant","content":txt,"timestamp":now_ts()})
 
-# ---------- 辅助函数 ----------
 def build_sys():
     if S.oc_id is None: return ""
     base = S.oc_base
@@ -268,25 +235,20 @@ if S.oc_name:
 else:
     st.title("🎭 OC 聊天助手")
 
-# 密码与清空行
-c1, c2 = st.columns([5,1])
+# 密码行：输入框 + 正确符号 + 清空按钮
+c1, c2, c3 = st.columns([4.5, 0.5, 1])
 with c1:
     pw = st.text_input("🔐 OC 密码", key="oc_pw_input", value=S.oc_pw)
 with c2:
+    if S.oc_id is not None:
+        st.markdown("✅", unsafe_allow_html=True)
+    else:
+        st.write("")
+with c3:
     if st.button("🗑️ 清空"):
         for k in defaults: S[k] = defaults[k]
         st.rerun()
 
-# 密码正确：输入框变绿
-if S.oc_id is not None:
-    st.markdown("""
-        <style>
-        div[data-st-key="oc_pw_input"] input {
-            border-color: #28a745 !important;
-            box-shadow: 0 0 0 1px #28a745 !important;
-        }
-        </style>
-    """, unsafe_allow_html=True)
 if S.pw_error:
     st.error("❌ 密码无效")
 
@@ -332,24 +294,26 @@ if pw != S.oc_pw:
         except Exception as e:
             S.oc_id = None; S.pw_error = str(e)
 
-# 渲染历史消息
+# ---------- 渲染消息（修复未读状态）----------
 prev_t = None
-for i,msg in enumerate(S.msgs):
+for i, msg in enumerate(S.msgs):
     if msg["role"] == "tool" or msg.get("silent"): continue
     if msg["role"] == "assistant" and not msg.get("content"): continue
 
-    # 动态已读判断
+    # 优先使用 read 字段（如果为 True 则已读），否则动态判断
     is_read = False
     if msg["role"] == "user":
-        for j in range(i+1, len(S.msgs)):
-            nxt = S.msgs[j]
-            if nxt["role"] in ("assistant","tool"):
-                is_read = True
-                break
-            if nxt["role"] == "user":
-                break
+        if msg.get("read"):                     # ✅ 新增：信任 read 标志
+            is_read = True
+        else:
+            for j in range(i+1, len(S.msgs)):
+                nxt = S.msgs[j]
+                if nxt["role"] in ("assistant","tool"):
+                    is_read = True
+                    break
+                if nxt["role"] == "user":
+                    break
 
-    # 时间标签
     if prev_t is None or msg["timestamp"] - prev_t >= 1200:
         dt = datetime.fromtimestamp(msg["timestamp"], tz=ZoneInfo("Asia/Shanghai"))
         st.markdown(f'<div class="time-divider">📅 {dt.strftime("%m月%d日 %H:%M")}</div>', unsafe_allow_html=True)
@@ -363,12 +327,13 @@ for i,msg in enumerate(S.msgs):
         with st.chat_message("assistant"):
             st.markdown(msg["content"])
 
-# ---------- 铃铛按钮（输入框上方一行，靠右）----------
+# ---------- 铃铛（提前渲染以利红点）----------
+# 红点 CSS 必须在按钮之后注入，这里先把按钮和红点放在一起
 col_a, col_b = st.columns([9,1])
 with col_b:
-    bell = st.button("🔔", key="bell_btn", help="AI 主动消息（点击立即查看）")
+    bell = st.button("🔔", key="bell_btn", help="主动消息")
 
-# 红点控制
+# 红点注入（紧接按钮后）
 if S.auto_pending:
     st.markdown("""
         <style>
@@ -382,7 +347,7 @@ if bell and S.auto_pending:
     send_auto()
     st.rerun()
 
-# ---------- 聊天输入框（保持默认）----------
+# 聊天输入
 user_input = st.chat_input("输入消息...")
 
 # ---------- 用户输入处理 ----------
@@ -398,12 +363,20 @@ if user_input:
     else:
         if S.auto_pending:
             send_auto()
+        # 添加用户消息，并立即设置 read = False
         S.msgs.append({"role":"user","content":user_input,"read":False,"timestamp":now_ts()})
         S.last_prompt = user_input
-        S.stage = "generating"
+        S.stage = "mark_read"          # 进入 mark_read 阶段
         st.rerun()
 
-# ---------- 生成回复 ----------
+# ---------- 两阶段处理（先标记已读，再生成）----------
+if S.stage == "mark_read":
+    # 标记最后一条用户消息为已读
+    if S.msgs and S.msgs[-1]["role"] == "user":
+        S.msgs[-1]["read"] = True
+    S.stage = "generating"
+    st.rerun()    # 刷新页面，此时消息已显示为“已读”
+
 if S.stage == "generating":
     key = get_key()
     if not key: st.stop()
@@ -491,7 +464,7 @@ if S.stage == "generating":
                 typewriter(ph2, para, speed)
             S.msgs.append({"role":"assistant","content":para,"timestamp":now_ts()})
 
-    # 主动消息概率：仅生成待发送内容（红点）
+    # 主动消息生成（仅点亮红点）
     if S.auto_prob > 0 and random.random() < S.auto_prob:
         gen_auto()
 
@@ -500,5 +473,6 @@ if S.stage == "generating":
         nxt = S.queue.pop(0)
         S.msgs.append({"role":"user","content":nxt,"read":False,"timestamp":now_ts()})
         S.last_prompt = nxt
-        S.stage = "generating"
+        S.stage = "mark_read"   # 排队消息也走两阶段
+        st.rerun()
     st.rerun()
