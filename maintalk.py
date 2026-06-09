@@ -129,49 +129,42 @@ def typewriter(ph, text, speed):
         time.sleep(speed)
     ph.markdown(text)
 
-# ---------- 万能图片提取 + 渲染 ----------
-def find_images_in_text(text):
-    """在文本中查找所有与 image_pool 文件名匹配的子串，返回图片文件名列表和剩余文本"""
-    if not S.oc_image_file_names:
-        return text, []
-    # 按照文件名长度从长到短排序，避免短文件名误匹配
-    sorted_names = sorted(S.oc_image_file_names, key=len, reverse=True)
-    images_found = []
-    for fname in sorted_names:
-        if fname in text:
-            images_found.append(fname)
-            # 从文本中移除已匹配的文件名（防止重复显示）
-            text = text.replace(fname, '', 1)
-    return text.strip(), images_found
+# ---------- 图片提取（核心：标准格式 [图片:xxx]）----------
+def extract_image_filename(text):
+    """从文本中提取第一个匹配 [图片:xxx] 的文件名，若无则返回 None"""
+    # 支持中文冒号和英文冒号
+    pattern = re.compile(r'\[图片[:：]\s*([^\]]+?)\s*\]')
+    match = pattern.search(text)
+    if match:
+        return match.group(1).strip()
+    return None
 
 def render_message(content):
     """历史消息渲染（无打字机）"""
-    clean_text, images = find_images_in_text(content)
-    if clean_text:
-        st.markdown(clean_text)
-    if images:
-        for img in images:
-            data_url = S.oc_image_map.get(img)
-            if data_url:
-                st.image(data_url, width=200, caption=img)
-    elif content.strip():   # 如果没有图片但有文字，且文字不为空，说明可能匹配失败，显示调试信息
-        # 调试：显示提取失败的痕迹（可注释掉）
-        pass
+    img_name = extract_image_filename(content)
+    # 移除图片标记，显示纯文本
+    clean = re.sub(r'\[图片[:：][^\]]*\]', '', content).strip()
+    if clean:
+        st.markdown(clean)
+    if img_name:
+        data_url = S.oc_image_map.get(img_name)
+        if data_url:
+            st.image(data_url, width=200, caption=img_name)
 
 def render_message_with_typewriter(content, speed):
     """打字机效果 + 图片"""
-    clean_text, images = find_images_in_text(content)
-    if clean_text:
+    img_name = extract_image_filename(content)
+    clean = re.sub(r'\[图片[:：][^\]]*\]', '', content).strip()
+    if clean:
         placeholder = st.empty()
         if speed > 0:
-            typewriter(placeholder, clean_text, speed)
+            typewriter(placeholder, clean, speed)
         else:
-            placeholder.markdown(clean_text)
-    if images:
-        for img in images:
-            data_url = S.oc_image_map.get(img)
-            if data_url:
-                st.image(data_url, width=200, caption=img)
+            placeholder.markdown(clean)
+    if img_name:
+        data_url = S.oc_image_map.get(img_name)
+        if data_url:
+            st.image(data_url, width=200, caption=img_name)
 
 # ---------- 分段相关 ----------
 def random_split(text, min_len, max_len):
@@ -311,9 +304,12 @@ def build_sys(force_image=False):
         for fname in S.oc_image_file_names:
             base += f"- {fname}\n"
         if force_image:
-            base += "【重要】本次回复你必须附带一张图片。请把图片的文件名直接放在回复中（不用加括号），文件名必须与上面列表完全一致。"
+            base += (
+                "【重要】本次回复你必须附带一张图片。请在最末尾使用格式 `[图片:文件名]`（英文方括号，英文冒号），"
+                "例如 `[图片:开坦克.png]`。文件名必须从上面列表中选择，不能自己编造。"
+            )
         else:
-            base += "【注意】本次回复不要添加任何图片文件名。"
+            base += "【注意】本次回复不要添加任何图片标记。"
     
     return base
 
@@ -327,7 +323,8 @@ def prepare_msgs(msgs):
         d = {"role": m["role"]}
         if "content" in m and m["content"] is not None:
             content = m["content"]
-            content = re.sub(r'\[图片[:：]\s*.*?\]', '[图片]', content).strip()
+            # 替换图片标记为占位符
+            content = re.sub(r'\[图片[:：][^\]]*\]', '[图片]', content).strip()
             d["content"] = content if content else "…"
         out.append(d)
     return out
