@@ -144,12 +144,9 @@ def apply_effects(text, typo_rate, emoji_rate, special_punct):
 
 # ---------- 打字机（优化：含图片的段落直接完整渲染）----------
 def typewriter(ph, text, speed):
-    # 检测是否包含 Markdown 图片语法
     if re.search(r'!\[.*?\]\(.*?\)', text):
-        # 直接一次性渲染，不逐字打印
         ph.markdown(text)
         return
-    # 否则逐字打印
     disp = ""
     for ch in text:
         disp += ch
@@ -201,6 +198,28 @@ def mark_previous_messages_read():
     for msg in st.session_state.msgs:
         if msg["role"] == "user" and not msg.get("read", False):
             msg["read"] = True
+
+# ---------- 清洗消息中的 data URL（用于 API 请求）----------
+def clean_image_urls(text):
+    if not isinstance(text, str):
+        return text
+    # 将 data:image 类型的图片链接替换为 [图片]
+    return re.sub(r'!\[.*?\]\(data:image/.*?\)', '[图片]', text)
+
+def prepare_msgs(msgs):
+    out = []
+    for m in msgs:
+        if m.get("silent"): continue
+        d = {"role": m["role"]}
+        if "content" in m and m["content"] is not None:
+            # 清洗 content 中的图片 data URL
+            d["content"] = clean_image_urls(m["content"])
+        if "tool_calls" in m:
+            d["tool_calls"] = m["tool_calls"]
+        if "tool_call_id" in m:
+            d["tool_call_id"] = m["tool_call_id"]
+        out.append(d)
+    return out
 
 # ---------- CSS（聊天气泡）----------
 def inject_css():
@@ -302,20 +321,6 @@ def build_sys():
         base += "\n\n你拥有以下图片资源，但你无法直接看到它们的 data URL。如果需要发送图片，请调用 `get_image` 工具，传入图片索引（从 0 开始），工具会返回图片的 data URL，然后你在回复中使用 Markdown 图片语法插入。"
         base += "\n图片列表：\n" + "\n".join([f"- {name}" for name in S.oc_image_file_names])
     return base
-
-def prepare_msgs(msgs):
-    out = []
-    for m in msgs:
-        if m.get("silent"): continue
-        d = {"role":m["role"]}
-        if "content" in m and m["content"] is not None:
-            d["content"] = m["content"]
-        if "tool_calls" in m:
-            d["tool_calls"] = m["tool_calls"]
-        if "tool_call_id" in m:
-            d["tool_call_id"] = m["tool_call_id"]
-        out.append(d)
-    return out
 
 def maybe_attach_image(text):
     if S.oc_image_prob > 0 and S.oc_image_pool:
@@ -522,7 +527,7 @@ if S.stage == "generating":
             else:
                 res = f"技能 {fname} 未找到"
             S.msgs.append({"role":"tool","tool_call_id":tc["id"],"content":res,"timestamp":now_beijing_timestamp()})
-            # 不显示 tool 消息在前端（已删除 st.chat_message 块）
+            # 不在前端显示工具调用
         msgs2 = [{"role":"system","content":sys}] if sys else []
         msgs2 += prepare_msgs(S.msgs)
         full2 = ""
