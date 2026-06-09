@@ -131,7 +131,7 @@ def typewriter(ph, text, speed):
 
 # ---------- 渲染消息（带图片处理）----------
 def render_message(content):
-    """历史消息渲染：文本 + 图片"""
+    """历史消息渲染：文本 + 图片（无打字机）"""
     pattern = re.compile(r'\[图片:(.*?)\]')
     parts = pattern.split(content)
     images = []
@@ -308,11 +308,15 @@ def build_sys():
         p = Path("materials") / f"{S.oc_material}.txt"
         if p.exists():
             base += "\n\n[知识库]\n" + p.read_text(encoding="utf-8")
-    if S.oc_image_file_names and S.oc_image_prob > 0:
-        base += f"\n\n你有 {S.oc_image_prob*100:.0f}% 的概率在回复中附带一张图片。如果你决定发送图片，请在回复的**末尾**单独一行写上 `[图片:文件名]`（例如 `[图片:cat.jpg]`），文件名从以下列表选择：\n"
+    
+    # 🌟 智能图片选择指令：让AI根据文件名理解含义并自主选择
+    if S.oc_image_file_names:
+        base += "\n\n你拥有以下表情图片，可以根据聊天语境选择一张发送。每张图片的含义由其文件名描述。\n"
         for fname in S.oc_image_file_names:
-            base += f"- {fname}\n"
-        base += "注意：不要写其他解释，只写这个标记。"
+            base += f"- {fname} ：{fname}\n"
+        base += "当你想让回复更生动时，可在末尾加上 `[图片:文件名]`，例如 `[图片:奶龙委屈卖萌.png]`。\n"
+        base += "请根据你当前的情绪或你猜测的用户情绪来选图。如果没有合适的，可以不发。"
+    
     return base
 
 def get_history_msgs(max_len=12):
@@ -326,7 +330,7 @@ def prepare_msgs(msgs):
         d = {"role": m["role"]}
         if "content" in m and m["content"] is not None:
             content = m["content"]
-            # 替换图片标记为简短占位符，保留语义
+            # 图片标记替换为简短占位符，保留语义
             content = re.sub(r'\[图片:.*?\]', '[图片]', content).strip()
             d["content"] = content if content else "…"
         out.append(d)
@@ -431,8 +435,7 @@ for i, msg in enumerate(visible_msgs):
             st.caption("已读" if is_read else "未读")
     else:
         with st.chat_message("assistant"):
-            # 历史消息使用 render_message（无打字机）
-            render_message(msg["content"])
+            render_message(msg["content"])   # 历史消息直接渲染
 
 # ---------- 铃铛 ----------
 col_a, col_b = st.columns([9,1])
