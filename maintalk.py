@@ -10,9 +10,6 @@ import mimetypes
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
-import importlib
-import pkgutil
-import skills
 
 # ---------- 密码转换（数字循环偏移）----------
 SHIFT = 1
@@ -46,13 +43,14 @@ def load_oc(oc_id):
             return json.load(fh)
     return None
 
-# ---------- 从 materials 加载图片为 data URL ----------
+# ---------- 从 materials 加载图片为 data URL（仅用于前端显示）----------
 def load_images_from_materials(file_names):
-    data_urls = []
+    """返回字典 {文件名: data_url}，同时保存列表顺序"""
+    data_map = {}
     materials_dir = Path("materials")
     if not materials_dir.exists():
         materials_dir.mkdir(exist_ok=True)
-        return data_urls
+        return data_map
     for fname in file_names:
         img_path = materials_dir / fname
         if not img_path.exists():
@@ -66,26 +64,10 @@ def load_images_from_materials(file_names):
                 mime_type = "image/jpeg"
             b64_str = base64.b64encode(img_bytes).decode("utf-8")
             data_url = f"data:{mime_type};base64,{b64_str}"
-            data_urls.append(data_url)
+            data_map[fname] = data_url
         except Exception as e:
             st.warning(f"读取图片 {fname} 失败: {e}")
-    return data_urls
-
-# ---------- 技能加载 ----------
-@st.cache_resource
-def load_skills():
-    tools = []
-    execs = {}
-    for _, mod, _ in pkgutil.iter_modules(skills.__path__):
-        if mod.startswith("_"):
-            continue
-        m = importlib.import_module(f"skills.{mod}")
-        if hasattr(m, "TOOL_DEF"):
-            tools.append(m.TOOL_DEF)
-            name = m.TOOL_DEF["function"]["name"]
-            if hasattr(m, "execute"):
-                execs[name] = m.execute
-    return tools, execs
+    return data_map
 
 # ---------- API Key ----------
 def get_key():
@@ -142,11 +124,8 @@ def apply_effects(text, typo_rate, emoji_rate, special_punct):
         text = "".join(sentences)
     return text
 
-# ---------- 打字机（优化：含图片的段落直接完整渲染）----------
+# ---------- 打字机 ----------
 def typewriter(ph, text, speed):
-    if re.search(r'!\[.*?\]\(.*?\)', text):
-        ph.markdown(text)
-        return
     disp = ""
     for ch in text:
         disp += ch
@@ -179,15 +158,37 @@ def split_paragraphs(text, panic_mode=None):
         paras = re.split(r'\n{2,}', text.strip())
         return [p.strip() for p in paras if p.strip()] if len(paras) > 1 else [text]
 
+# ---------- 渲染消息（支持图片标记替换）----------
+def render_message(content):
+    """将消息中的 [图片:文件名] 替换为真正的图片 HTML"""
+    def replace_img(match):
+        img_name = match.group(1)
+        # 从图片映射中获取 data_url
+        data_url = S.oc_image_map.get(img_name)
+        if data_url:
+            return f'<img src="{data_url}" style="max-width:200px; border-radius:10px; margin:8px 0;">'
+        else:
+            return f'[图片不存在: {img_name}]'
+    # 匹配 [图片:文件名] 格式
+    rendered = re.sub(r'\[图片:(.*?)\]', replace_img, content)
+    return rendered
+
 def send_paragraphs(paragraphs, speed):
     S = st.session_state
     for idx, para in enumerate(paragraphs):
+        # 先渲染图片标记（替换为真正的图片 HTML）
+        rendered_para = render_message(para)
         with st.chat_message("assistant"):
             placeholder = st.empty()
-            typewriter(placeholder, para, speed)
+            # 如果段落中包含图片 HTML，直接一次性渲染（避免逐字打印图片标签）
+            if '<img' in rendered_para:
+                placeholder.markdown(rendered_para, unsafe_allow_html=True)
+            else:
+                typewriter(placeholder, rendered_para, speed)
+        # 存储原始消息（包含图片标记，不含 HTML）
         S.msgs.append({
             "role": "assistant",
-            "content": para,
+            "content": para,   # 原始标记
             "timestamp": now_beijing_timestamp()
         })
         if idx != len(paragraphs) - 1:
@@ -199,25 +200,22 @@ def mark_previous_messages_read():
         if msg["role"] == "user" and not msg.get("read", False):
             msg["read"] = True
 
-# ---------- 清洗消息中的 data URL（用于 API 请求）----------
-def clean_image_urls(text):
-    if not isinstance(text, str):
-        return text
-    # 将 data:image 类型的图片链接替换为 [图片]
-    return re.sub(r'!\[.*?\]\(data:image/.*?\)', '[图片]', text)
+# ---------- 历史消息截断（节省 token）----------
+MAX_HISTORY = 20
 
+def get_history_msgs():
+    if len(st.session_state.msgs) > MAX_HISTORY:
+        return st.session_state.msgs[-MAX_HISTORY:]
+    return st.session_state.msgs
+
+# ---------- 清洗消息（无需额外处理，因为存储的是短标记）----------
 def prepare_msgs(msgs):
     out = []
     for m in msgs:
         if m.get("silent"): continue
         d = {"role": m["role"]}
         if "content" in m and m["content"] is not None:
-            # 清洗 content 中的图片 data URL
-            d["content"] = clean_image_urls(m["content"])
-        if "tool_calls" in m:
-            d["tool_calls"] = m["tool_calls"]
-        if "tool_call_id" in m:
-            d["tool_call_id"] = m["tool_call_id"]
+            d["content"] = m["content"]   # 直接使用原始标记（很短）
         out.append(d)
     return out
 
@@ -266,9 +264,9 @@ defaults = {
     "pw_error":"", "prev_oc":None,
     "stage":None, "last_prompt":None, "use_ai_urg":False,
     "ai_busy":False, "queue":[], 
-    "oc_image_pool":[],               # data URL 列表
-    "oc_image_file_names":[],         # 原始文件名列表
-    "oc_image_prob":0.0
+    "oc_image_map":{},               # 文件名 -> data_url 映射
+    "oc_image_file_names":[],        # 文件名列表
+    "oc_image_prob":0.0              # AI 发送图片的概率（在系统提示中告知）
 }
 for k,v in defaults.items():
     if k not in S:
@@ -284,7 +282,7 @@ def gen_auto():
     try:
         cl = openai.OpenAI(api_key=key, base_url="https://api.deepseek.com")
         sys = build_sys()
-        recent = S.msgs[-6:]
+        recent = get_history_msgs()[-6:]
         msgs = [{"role":"system","content":sys}] if sys else []
         msgs += prepare_msgs(recent)
         msgs.append({"role":"user","content":f"[内部指令]{S.auto_prompt} 请直接说出一句主动发起的话题，简短自然。"})
@@ -293,7 +291,6 @@ def gen_auto():
     except:
         txt = "（突然想找你聊聊天…）"
     if txt:
-        txt = maybe_attach_image(txt)
         txt = apply_effects(txt, S.oc_typo, S.oc_emoji, S.oc_punct)
         S.auto_text = txt
         S.auto_pending = True
@@ -303,8 +300,10 @@ def send_auto():
     txt = S.auto_text
     S.auto_pending = False
     S.auto_text = ""
+    # 主动消息也可能包含图片标记，同样需要渲染
+    rendered = render_message(txt)
     with st.chat_message("assistant"):
-        st.markdown(txt)
+        st.markdown(rendered, unsafe_allow_html=True)
     S.msgs.append({"role":"assistant","content":txt,"timestamp":now_beijing_timestamp()})
 
 def build_sys():
@@ -317,17 +316,13 @@ def build_sys():
         p = Path("materials") / f"{S.oc_material}.txt"
         if p.exists():
             base += "\n\n[知识库]\n" + p.read_text(encoding="utf-8")
-    if S.oc_image_file_names:
-        base += "\n\n你拥有以下图片资源，但你无法直接看到它们的 data URL。如果需要发送图片，请调用 `get_image` 工具，传入图片索引（从 0 开始），工具会返回图片的 data URL，然后你在回复中使用 Markdown 图片语法插入。"
-        base += "\n图片列表：\n" + "\n".join([f"- {name}" for name in S.oc_image_file_names])
+    # 告知 AI 图片发送规则
+    if S.oc_image_file_names and S.oc_image_prob > 0:
+        base += f"\n\n你有 {S.oc_image_prob*100:.0f}% 的概率在回复中附带一张图片。你可以主动选择是否发送图片，以及发送哪张。图片列表如下（用文件名标识）：\n"
+        for idx, fname in enumerate(S.oc_image_file_names):
+            base += f"- {fname} (索引 {idx})\n"
+        base += "如果你决定发送图片，请在回复的**末尾**单独一行写上 `[图片:文件名]`（例如 `[图片:cat.jpg]`）。注意：不要写其他解释，只写这个标记。"
     return base
-
-def maybe_attach_image(text):
-    if S.oc_image_prob > 0 and S.oc_image_pool:
-        if random.random() < S.oc_image_prob:
-            img_url = random.choice(S.oc_image_pool)
-            text += f"\n\n![图片]({img_url})"
-    return text
 
 # ---------- 界面 ----------
 if S.oc_name:
@@ -389,9 +384,10 @@ if pw != S.oc_pw:
                 S.auto_prob = prof.get("auto_message_probability",0.0)
                 S.auto_prompt = prof.get("auto_message_prompt","你可以偶尔主动聊聊天。")
                 S.use_ai_urg = prof.get("use_ai_urgency",False)
+                # 加载图片映射（仅用于前端显示）
                 raw_image_files = prof.get("image_pool", [])
                 S.oc_image_file_names = raw_image_files
-                S.oc_image_pool = load_images_from_materials(raw_image_files)
+                S.oc_image_map = load_images_from_materials(raw_image_files)
                 S.oc_image_prob = prof.get("image_attachment_probability", 0.0)
                 S.pw_error = ""
                 if S.prev_oc != oid_str:
@@ -422,8 +418,10 @@ for i, msg in enumerate(S.msgs):
             st.markdown(msg["content"])
             st.caption("已读" if is_read else "未读")
     else:
+        # 渲染助手的消息（将图片标记替换为真实图片）
+        rendered = render_message(msg["content"])
         with st.chat_message("assistant"):
-            st.markdown(msg["content"])
+            st.markdown(rendered, unsafe_allow_html=True)
 
 col_a, col_b = st.columns([9,1])
 with col_b:
@@ -477,11 +475,10 @@ if S.stage == "generating":
     S.ai_busy = True
     mark_previous_messages_read()
     
-    tools, execs = load_skills()
     cl = openai.OpenAI(api_key=key, base_url="https://api.deepseek.com")
     sys = build_sys()
     msgs = [{"role":"system","content":sys}] if sys else []
-    msgs += prepare_msgs(S.msgs)
+    msgs += prepare_msgs(get_history_msgs())
 
     ph = st.empty()
     ph.markdown('<p style="color:#888;font-style:italic;">对方正在输入中...</p>', unsafe_allow_html=True)
@@ -490,7 +487,7 @@ if S.stage == "generating":
     if S.use_ai_urg:
         try:
             eval_cl = openai.OpenAI(api_key=key, base_url="https://api.deepseek.com")
-            recent = S.msgs[-6:]
+            recent = get_history_msgs()[-6:]
             eval_msgs = [{"role":"system","content":f"{sys}\n\n请基于以上角色设定和对话历史，评估用户最后一条消息的紧急程度（0.0 非常平静，1.0 极度焦急）。只输出一个浮点数。"}]
             eval_msgs += prepare_msgs(recent)
             r = eval_cl.chat.completions.create(model="deepseek-chat", messages=eval_msgs, temperature=0, max_tokens=10)
@@ -499,56 +496,20 @@ if S.stage == "generating":
             urgency = 0.0
 
     full = ""
-    tool_calls = []
-    resp = cl.chat.completions.create(model="deepseek-chat", messages=msgs, tools=tools if tools else None, stream=True)
+    resp = cl.chat.completions.create(model="deepseek-chat", messages=msgs, stream=True)
     for chunk in resp:
-        d = chunk.choices[0].delta
-        if d.content: full += d.content
-        if d.tool_calls:
-            for td in d.tool_calls:
-                if td.index >= len(tool_calls):
-                    tool_calls.append({"id":td.id,"type":"function","function":{"name":"","arguments":""}})
-                if td.id: tool_calls[td.index]["id"] = td.id
-                if td.function:
-                    if td.function.name: tool_calls[td.index]["function"]["name"] = td.function.name
-                    if td.function.arguments: tool_calls[td.index]["function"]["arguments"] += td.function.arguments
-
-    if tool_calls:
-        S.msgs.append({"role":"assistant","content":None,"tool_calls":tool_calls,"timestamp":now_beijing_timestamp()})
-        for tc in tool_calls:
-            fname = tc["function"]["name"]
-            args = json.loads(tc["function"]["arguments"])
-            fn = execs.get(fname)
-            if fn:
-                try:
-                    res = fn(args)
-                except Exception as e:
-                    res = f"执行技能 {fname} 时出错: {e}"
-            else:
-                res = f"技能 {fname} 未找到"
-            S.msgs.append({"role":"tool","tool_call_id":tc["id"],"content":res,"timestamp":now_beijing_timestamp()})
-            # 不在前端显示工具调用
-        msgs2 = [{"role":"system","content":sys}] if sys else []
-        msgs2 += prepare_msgs(S.msgs)
-        full2 = ""
-        resp2 = cl.chat.completions.create(model="deepseek-chat", messages=msgs2, stream=True)
-        for c in resp2:
-            if c.choices[0].delta.content: full2 += c.choices[0].delta.content
-        full = full2 if full2 else "（工具调用完成）"
+        if chunk.choices[0].delta.content:
+            full += chunk.choices[0].delta.content
 
     ph.empty()
     if full and full.strip():
         full = re.sub(r"\[URGENCY:\d+\.?\d*\]","",full).strip()
-        full = maybe_attach_image(full)
-        speed = S.oc_speed
-        panic_mode = None
-        if urgency >= S.oc_urg_thresh and S.oc_panic:
-            speed *= S.oc_panic.get("speed_multiplier", 1.0)
-            panic_mode = S.oc_panic
-
+        # 应用特效（注意：图片标记 [图片:xxx] 不会被特效改变，因为是纯文本）
         processed = apply_effects(full, S.oc_typo, S.oc_emoji, S.oc_punct)
-        paragraphs = split_paragraphs(processed, panic_mode)
-        send_paragraphs(paragraphs, speed)
+        # 分段
+        paragraphs = split_paragraphs(processed, S.oc_panic if urgency >= S.oc_urg_thresh else None)
+        # 发送并渲染（会自动处理图片标记）
+        send_paragraphs(paragraphs, S.oc_speed)
 
     if S.auto_prob > 0 and random.random() < S.auto_prob:
         gen_auto()
