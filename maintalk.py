@@ -6,6 +6,7 @@ import time
 import random
 import re
 import base64
+import mimetypes
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -14,7 +15,7 @@ import pkgutil
 import skills
 
 # ---------- 密码转换（数字循环偏移）----------
-SHIFT = 1   # 偏移量，可修改
+SHIFT = 1
 
 def encode_numeric(n_str, shift=SHIFT):
     res = []
@@ -44,6 +45,32 @@ def load_oc(oc_id):
         with open(f, "r", encoding="utf-8") as fh:
             return json.load(fh)
     return None
+
+# ---------- 从 materials 加载图片为 data URL ----------
+def load_images_from_materials(file_names):
+    """从 materials 目录读取图片文件，返回 data URL 列表"""
+    data_urls = []
+    materials_dir = Path("materials")
+    if not materials_dir.exists():
+        materials_dir.mkdir(exist_ok=True)
+        return data_urls
+    for fname in file_names:
+        img_path = materials_dir / fname
+        if not img_path.exists():
+            st.warning(f"图片文件不存在: {fname}")
+            continue
+        try:
+            with open(img_path, "rb") as f:
+                img_bytes = f.read()
+            mime_type, _ = mimetypes.guess_type(img_path)
+            if not mime_type or not mime_type.startswith("image/"):
+                mime_type = "image/jpeg"
+            b64_str = base64.b64encode(img_bytes).decode("utf-8")
+            data_url = f"data:{mime_type};base64,{b64_str}"
+            data_urls.append(data_url)
+        except Exception as e:
+            st.warning(f"读取图片 {fname} 失败: {e}")
+    return data_urls
 
 # ---------- 技能加载 ----------
 @st.cache_resource
@@ -151,6 +178,7 @@ def split_paragraphs(text, panic_mode=None):
         return [p.strip() for p in paras if p.strip()] if len(paras) > 1 else [text]
 
 def send_paragraphs(paragraphs, speed):
+    S = st.session_state
     for idx, para in enumerate(paragraphs):
         with st.chat_message("assistant"):
             placeholder = st.empty()
@@ -161,7 +189,7 @@ def send_paragraphs(paragraphs, speed):
             "timestamp": now_beijing_timestamp()
         })
         if idx != len(paragraphs) - 1:
-            pass
+            time.sleep(0.2)
 
 # ---------- CSS（聊天气泡）----------
 def inject_css():
@@ -184,7 +212,6 @@ def inject_css():
             background:linear-gradient(135deg,#fff3e0,#ffe0b2); border:2px solid #ffa726;
             border-radius:6px 20px 20px 20px; margin-right:8px;
         }
-        /* 图片在气泡中的样式 */
         div[data-testid="stChatMessageContent"] img {
             max-width: 200px;
             border-radius: 10px;
@@ -209,8 +236,9 @@ defaults = {
     "pw_error":"", "prev_oc":None,
     "stage":None, "last_prompt":None, "use_ai_urg":False,
     "ai_busy":False, "queue":[], 
-    "oc_image_pool":[],               # 图片池
-    "oc_image_prob":0.0               # AI 附加图片概率
+    "oc_image_pool":[],               # data URL 列表
+    "oc_image_file_names":[],         # 原始文件名列表
+    "oc_image_prob":0.0
 }
 for k,v in defaults.items():
     if k not in S:
@@ -235,7 +263,6 @@ def gen_auto():
     except:
         txt = "（突然想找你聊聊天…）"
     if txt:
-        # 主动消息也可能附加图片
         txt = maybe_attach_image(txt)
         txt = apply_effects(txt, S.oc_typo, S.oc_emoji, S.oc_punct)
         S.auto_text = txt
@@ -260,10 +287,10 @@ def build_sys():
         p = Path("materials") / f"{S.oc_material}.txt"
         if p.exists():
             base += "\n\n[知识库]\n" + p.read_text(encoding="utf-8")
-    # 在系统提示中加入图片池信息
-    if S.oc_image_pool:
-        img_descriptions = "\n".join([f"- 图片{i+1}: {url}" for i, url in enumerate(S.oc_image_pool)])
-        base += f"\n\n你可以使用以下图片链接来发送图片，在回复中用 Markdown 语法 ![描述](图片URL) 插入。可用图片列表：\n{img_descriptions}"
+    # 提示 AI 可以通过 get_image 技能获取图片 data URL
+    if S.oc_image_file_names:
+        base += "\n\n你拥有以下图片资源，但你无法直接看到它们的 data URL。如果需要发送图片，请调用 `get_image` 工具，传入图片索引（从 0 开始），工具会返回图片的 data URL，然后你在回复中使用 Markdown 图片语法插入。"
+        base += "\n图片列表：\n" + "\n".join([f"- {name}" for name in S.oc_image_file_names])
     return base
 
 def prepare_msgs(msgs):
@@ -273,8 +300,7 @@ def prepare_msgs(msgs):
         d = {"role":m["role"]}
         if "content" in m and m["content"] is not None:
             d["content"] = m["content"]
-        if "image" in m:
-            d["image"] = m["image"]   # 用户发送的图片 base64
+        # 用户上传的图片已完全移除，此处不再处理
         if "tool_calls" in m:
             d["tool_calls"] = m["tool_calls"]
         if "tool_call_id" in m:
@@ -282,12 +308,11 @@ def prepare_msgs(msgs):
         out.append(d)
     return out
 
-# 随机附加图片到文本末尾
 def maybe_attach_image(text):
+    # AI 主动附加图片（使用 OC 图片池）
     if S.oc_image_prob > 0 and S.oc_image_pool:
         if random.random() < S.oc_image_prob:
             img_url = random.choice(S.oc_image_pool)
-            # 在末尾加上换行和图片标记
             text += f"\n\n![图片]({img_url})"
     return text
 
@@ -297,7 +322,6 @@ if S.oc_name:
 else:
     st.title("🎭 OC 聊天助手")
 
-# 密码行
 col_label, col_input, col_status, col_clear = st.columns([1.5, 4, 0.5, 1])
 with col_label:
     st.markdown("密码状态：")
@@ -318,7 +342,6 @@ with col_clear:
 if S.pw_error:
     st.error("❌ 密码无效")
 
-# 密码处理
 if pw != S.oc_pw:
     S.oc_pw = pw
     if pw.strip() == "":
@@ -353,7 +376,10 @@ if pw != S.oc_pw:
                 S.auto_prob = prof.get("auto_message_probability",0.0)
                 S.auto_prompt = prof.get("auto_message_prompt","你可以偶尔主动聊聊天。")
                 S.use_ai_urg = prof.get("use_ai_urgency",False)
-                S.oc_image_pool = prof.get("image_pool", [])
+                # 从 materials 加载图片
+                raw_image_files = prof.get("image_pool", [])
+                S.oc_image_file_names = raw_image_files
+                S.oc_image_pool = load_images_from_materials(raw_image_files)
                 S.oc_image_prob = prof.get("image_attachment_probability", 0.0)
                 S.pw_error = ""
                 if S.prev_oc != oid_str:
@@ -392,15 +418,12 @@ for i, msg in enumerate(S.msgs):
 
     if msg["role"] == "user":
         with st.chat_message("user"):
-            if msg.get("image"):
-                st.image(base64.b64decode(msg["image"]), width=300)
             st.markdown(msg["content"])
             st.caption("已读" if is_read else "未读")
     else:
         with st.chat_message("assistant"):
             st.markdown(msg["content"])
 
-# ---------- 铃铛 ----------
 col_a, col_b = st.columns([9,1])
 with col_b:
     bell_label = "🔔" + (" 🔴" if S.auto_pending else "")
@@ -410,24 +433,7 @@ if bell and S.auto_pending:
     send_auto()
     st.rerun()
 
-# ---------- 图片上传区域 ----------
-with st.expander("📷 上传图片（可选）"):
-    uploaded_file = st.file_uploader("选择图片", type=["jpg","jpeg","png"], label_visibility="collapsed")
-    if uploaded_file is not None:
-        img_bytes = uploaded_file.read()
-        img_b64 = base64.b64encode(img_bytes).decode("utf-8")
-        S.msgs.append({
-            "role": "user",
-            "content": "📷 我发了一张图片",
-            "image": img_b64,
-            "read": False,
-            "timestamp": now_beijing_timestamp()
-        })
-        S.last_prompt = "我发了一张图片，请根据你的人物设定回应（注意：你无法真正看见图片，但可以假装看见了并作出有趣的反应）"
-        S.stage = "generating"
-        st.rerun()
-
-# ---------- 聊天输入 ----------
+# ---------- 聊天输入（无图片上传）----------
 user_input = st.chat_input("输入消息...")
 
 if user_input:
@@ -510,9 +516,16 @@ if S.stage == "generating":
             fname = tc["function"]["name"]
             args = json.loads(tc["function"]["arguments"])
             fn = execs.get(fname)
-            res = fn(args) if fn else f"技能 {fname} 未找到"
+            if fn:
+                try:
+                    res = fn(args)
+                except Exception as e:
+                    res = f"执行技能 {fname} 时出错: {e}"
+            else:
+                res = f"技能 {fname} 未找到"
             S.msgs.append({"role":"tool","tool_call_id":tc["id"],"content":res,"timestamp":now_beijing_timestamp()})
-            with st.chat_message("tool"): st.caption(f"🔧 {fname} → {res}")
+            with st.chat_message("tool"):
+                st.caption(f"🔧 {fname} → {res}")
         msgs2 = [{"role":"system","content":sys}] if sys else []
         msgs2 += prepare_msgs(S.msgs)
         full2 = ""
@@ -524,7 +537,6 @@ if S.stage == "generating":
     ph.empty()
     if full and full.strip():
         full = re.sub(r"\[URGENCY:\d+\.?\d*\]","",full).strip()
-        # 应用特效之前，先尝试附加图片
         full = maybe_attach_image(full)
         speed = S.oc_speed
         panic_mode = None
