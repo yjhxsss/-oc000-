@@ -12,7 +12,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from PIL import Image
 
-# ========== 密码转换（数字循环偏移）==========
+# ---------- 密码转换（数字循环偏移）----------
 SHIFT = 1
 
 def encode_numeric(n_str, shift=SHIFT):
@@ -33,7 +33,7 @@ def decode_numeric(pw_str, shift=SHIFT):
             res.append(ch)
     return ''.join(res)
 
-# ========== OC 文件 ==========
+# ---------- OC 文件 ----------
 OC_DIR = Path("oc_profiles")
 OC_DIR.mkdir(exist_ok=True)
 
@@ -44,9 +44,9 @@ def load_oc(oc_id):
             return json.load(fh)
     return None
 
-# ========== 图片加载 ==========
+# ---------- 图片加载（强制刷新缓存）----------
+@st.cache_data(ttl=60, show_spinner=False)   # 缓存60秒，便于调试
 def load_images_from_materials(file_names):
-    """返回 {文件名: data_url} 字典，仅加载存在的文件"""
     data_map = {}
     materials_dir = Path("materials")
     for fname in file_names:
@@ -65,11 +65,11 @@ def load_images_from_materials(file_names):
             pass
     return data_map
 
-# ========== API Key ==========
+# ---------- API Key ----------
 def get_key():
     return st.secrets.get("DEEPSEEK_API_KEY") or os.getenv("DEEPSEEK_API_KEY")
 
-# ========== 错别字风格 ==========
+# ---------- 错别字风格 ----------
 TYPO_STYLES = {
     "cute": {"是":"系","我":"窝","你":"泥","很":"狠","的":"哒","了":"啦","吗":"嘛","什么":"啥","怎么":"咋","没有":"木有","喜欢":"稀饭","吃":"恰","不":"卜","知道":"造"},
     "cool": {"什么":"啥","怎么":"怎","没有":"无","知道":"知","不要":"别"},
@@ -89,10 +89,10 @@ def get_typo_dict():
         return TYPO_STYLES[random.choice(styles)] if styles else BASE_TYPO
     return TYPO_STYLES.get(style, BASE_TYPO)
 
-# ========== 颜文字 ==========
+# ---------- 颜文字 ----------
 KAOMOJI = ["(◕ᴗ◕✿)","(≧◡≦)","(๑•̀ㅂ•́)و✧","(*/ω＼*)","(´• ω •`)"]
 
-# ========== 特效 ==========
+# ---------- 特效 ----------
 def apply_effects(text, typo_rate, emoji_rate, special_punct):
     if not text:
         return text
@@ -120,7 +120,7 @@ def apply_effects(text, typo_rate, emoji_rate, special_punct):
         text = "".join(sentences)
     return text
 
-# ========== 打字机 ==========
+# ---------- 打字机 ----------
 def typewriter(ph, text, speed):
     disp = ""
     for ch in text:
@@ -129,58 +129,33 @@ def typewriter(ph, text, speed):
         time.sleep(speed)
     ph.markdown(text)
 
-# ========== 图片提取（终极方案：标记优先 + 全局文件名扫描）==========
-def extract_images_from_text(text):
-    """返回 (clean_text, images_list)"""
-    pool = S.oc_image_file_names
-    img_map = S.oc_image_map
-
-    # 1. 尝试提取 [图片:xxx] 或 [图片：xxx]
-    pattern = re.compile(r'\[图片[:：]\s*([^\]]+?)\s*\]')
-    matches = pattern.findall(text)
-    if matches:
-        clean = pattern.sub('', text).strip()
-        valid = []
-        for m in matches:
-            m = m.strip()
-            if m in img_map:
-                valid.append(m)
-        return clean, valid
-
-    # 2. 没有标记？扫描全文，找文件名（精确包含）
-    clean = text
-    found = []
-    # 按文件名长度降序避免短名误匹配
-    for fname in sorted(pool, key=len, reverse=True):
-        if fname in clean:
-            found.append(fname)
-            # 移除文件名（只移除一次），避免重复
-            clean = clean.replace(fname, '', 1)
-    return clean.strip(), found
+# ---------- 图片提取（仅识别 [图片:xxx]）----------
+def extract_image_filename(text):
+    pattern = re.compile(r'\[图片:\s*([^\]]+?)\s*\]')
+    match = pattern.search(text)
+    return match.group(1).strip() if match else None
 
 def render_message(content):
-    clean, images = extract_images_from_text(content)
+    img_name = extract_image_filename(content)
+    clean = re.sub(r'\[图片:[^\]]*\]', '', content).strip()
     if clean:
         st.markdown(clean)
-    for img in images:
-        data_url = S.oc_image_map.get(img)
-        if data_url:
-            st.image(data_url, width=200, caption=img)
+    if img_name and img_name in S.oc_image_map:
+        st.image(S.oc_image_map[img_name], width=200, caption=img_name)
 
 def render_message_with_typewriter(content, speed):
-    clean, images = extract_images_from_text(content)
+    img_name = extract_image_filename(content)
+    clean = re.sub(r'\[图片:[^\]]*\]', '', content).strip()
     if clean:
         placeholder = st.empty()
         if speed > 0:
             typewriter(placeholder, clean, speed)
         else:
             placeholder.markdown(clean)
-    for img in images:
-        data_url = S.oc_image_map.get(img)
-        if data_url:
-            st.image(data_url, width=200, caption=img)
+    if img_name and img_name in S.oc_image_map:
+        st.image(S.oc_image_map[img_name], width=200, caption=img_name)
 
-# ========== 分段 ==========
+# ---------- 分段相关 ----------
 def random_split(text, min_len, max_len):
     segments = []
     i = 0
@@ -217,7 +192,7 @@ def send_paragraphs(paragraphs, speed):
         if idx != len(paragraphs) - 1:
             time.sleep(0.2)
 
-# ========== CSS ==========
+# ---------- CSS ----------
 def inject_css():
     st.markdown("""
         <style>
@@ -250,7 +225,7 @@ def inject_css():
 st.set_page_config(page_title="OC 聊天助手", page_icon="🎭")
 inject_css()
 
-# ========== 会话状态 ==========
+# ---------- 会话状态 ----------
 S = st.session_state
 defaults = {
     "msgs": [], "oc_id":None, "oc_pw":"", "oc_name":"", "oc_base":"", "oc_rules":[],
@@ -273,7 +248,7 @@ for k,v in defaults.items():
 def now_beijing_timestamp():
     return datetime.now(ZoneInfo("Asia/Shanghai")).timestamp()
 
-# ========== 主动消息 ==========
+# ---------- 主动消息 ----------
 def gen_auto():
     key = get_key()
     if not key: return
@@ -314,13 +289,16 @@ def build_sys(force_image=False):
             base += "\n\n[知识库]\n" + p.read_text(encoding="utf-8")
     
     if S.oc_image_file_names:
-        base += "\n\n你拥有以下表情图片（文件名即图片内容）：\n"
+        base += "\n\n你拥有以下表情图片：\n"
         for fname in S.oc_image_file_names:
             base += f"- {fname}\n"
         if force_image:
-            base += "【重要】本次回复你必须附带一张图片。请把你想发送的图片文件名直接放在回复中（无需加括号），文件名必须与上面列表完全一致。"
+            base += (
+                "【重要】本次回复你必须附带一张图片。请在回复的末尾严格按照格式 `[图片:文件名]` 输出，"
+                "例如 `[图片:开坦克.png]`。文件名必须从上面列表中选择，不能自己编造。"
+            )
         else:
-            base += "【注意】本次回复不要添加任何图片文件名。"
+            base += "【注意】本次回复不要添加任何图片标记。"
     
     return base
 
@@ -334,7 +312,7 @@ def prepare_msgs(msgs):
         d = {"role": m["role"]}
         if "content" in m and m["content"] is not None:
             content = m["content"]
-            content = re.sub(r'\[图片[:：][^\]]*\]', '[图片]', content).strip()
+            content = re.sub(r'\[图片:[^\]]*\]', '[图片]', content).strip()
             d["content"] = content if content else "…"
         out.append(d)
     return out
@@ -344,23 +322,11 @@ def mark_previous_messages_read():
         if msg["role"] == "user" and not msg.get("read", False):
             msg["read"] = True
 
-# ========== 界面 ==========
+# ---------- 界面 ----------
 if S.oc_name:
     st.title(f"🎭 {S.oc_name}")
 else:
     st.title("🎭 OC 聊天助手")
-
-# ---------- 调试面板（仅在密码正确后显示）----------
-if S.oc_id is not None:
-    with st.expander("🔧 调试信息（确认后折叠）"):
-        st.write("**Image Pool 配置**：", S.oc_image_file_names)
-        materials_dir = Path("materials")
-        if materials_dir.exists():
-            files = os.listdir(materials_dir)
-            st.write("**Materials 目录实际文件**：", files)
-        else:
-            st.error("materials 目录不存在！")
-        st.write("**已加载的图片映射**：", list(S.oc_image_map.keys()))
 
 col_label, col_input, col_status, col_clear = st.columns([1.5, 4, 0.5, 1])
 with col_label:
