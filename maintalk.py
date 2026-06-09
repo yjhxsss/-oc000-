@@ -129,57 +129,49 @@ def typewriter(ph, text, speed):
         time.sleep(speed)
     ph.markdown(text)
 
-# ---------- 渲染消息（终极兼容）----------
-def normalize_image_markers(content):
-    """将所有可能的符号统一为英文方括号和冒号"""
-    content = content.replace('：', ':')              # 中文冒号
-    content = content.replace('；', ':')              # 全角分号
-    content = content.replace('【', '[').replace('】', ']')
-    content = content.replace('（', '[').replace('）', ']')
-    content = content.replace('(', '[').replace(')', ']')
-    return content
-
-def extract_images(content):
-    """从文本中提取有效的图片文件名，返回 (纯文本, 图片列表)"""
-    content = normalize_image_markers(content)
-    # 匹配 [图片: xxx] 或 [图片：xxx] 等，支持前后空格
-    pattern = re.compile(r'\[图片\s*[:：]\s*(.*?)\s*\]')
-    parts = pattern.split(content)
-    images = []
-    text_parts = []
-    for i, part in enumerate(parts):
-        if i % 2 == 1:
-            fname = part.strip()
-            if fname and not fname.startswith(':'):   # 避免空文件名
-                images.append(fname)
-        else:
-            text_parts.append(part)
-    clean_text = ''.join(text_parts).strip()
-    return clean_text, images
+# ---------- 万能图片提取 + 渲染 ----------
+def find_images_in_text(text):
+    """在文本中查找所有与 image_pool 文件名匹配的子串，返回图片文件名列表和剩余文本"""
+    if not S.oc_image_file_names:
+        return text, []
+    # 按照文件名长度从长到短排序，避免短文件名误匹配
+    sorted_names = sorted(S.oc_image_file_names, key=len, reverse=True)
+    images_found = []
+    for fname in sorted_names:
+        if fname in text:
+            images_found.append(fname)
+            # 从文本中移除已匹配的文件名（防止重复显示）
+            text = text.replace(fname, '', 1)
+    return text.strip(), images_found
 
 def render_message(content):
     """历史消息渲染（无打字机）"""
-    clean_text, images = extract_images(content)
+    clean_text, images = find_images_in_text(content)
     if clean_text:
         st.markdown(clean_text)
-    for img_name in images:
-        data_url = S.oc_image_map.get(img_name)
-        if data_url:
-            st.image(data_url, width=200, caption=img_name)
+    if images:
+        for img in images:
+            data_url = S.oc_image_map.get(img)
+            if data_url:
+                st.image(data_url, width=200, caption=img)
+    elif content.strip():   # 如果没有图片但有文字，且文字不为空，说明可能匹配失败，显示调试信息
+        # 调试：显示提取失败的痕迹（可注释掉）
+        pass
 
 def render_message_with_typewriter(content, speed):
     """打字机效果 + 图片"""
-    clean_text, images = extract_images(content)
+    clean_text, images = find_images_in_text(content)
     if clean_text:
         placeholder = st.empty()
         if speed > 0:
             typewriter(placeholder, clean_text, speed)
         else:
             placeholder.markdown(clean_text)
-    for img_name in images:
-        data_url = S.oc_image_map.get(img_name)
-        if data_url:
-            st.image(data_url, width=200, caption=img_name)
+    if images:
+        for img in images:
+            data_url = S.oc_image_map.get(img)
+            if data_url:
+                st.image(data_url, width=200, caption=img)
 
 # ---------- 分段相关 ----------
 def random_split(text, min_len, max_len):
@@ -319,13 +311,9 @@ def build_sys(force_image=False):
         for fname in S.oc_image_file_names:
             base += f"- {fname}\n"
         if force_image:
-            base += (
-                "【重要】本次回复你必须附带一张图片。请根据对话内容选择最合适的一张，"
-                "在回复的末尾单独一行严格按照格式 `[图片:文件名]` 输出（使用英文方括号和英文冒号），例如 `[图片:开坦克.png]`。"
-                "必须写出完整的文件名，绝对不能只写 `[图片]` 或 `[图片:]`。"
-            )
+            base += "【重要】本次回复你必须附带一张图片。请把图片的文件名直接放在回复中（不用加括号），文件名必须与上面列表完全一致。"
         else:
-            base += "【注意】本次回复不要添加任何图片标记。"
+            base += "【注意】本次回复不要添加任何图片文件名。"
     
     return base
 
