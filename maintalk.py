@@ -44,14 +44,16 @@ def load_oc(oc_id):
             return json.load(fh)
     return None
 
-# ---------- 图片加载（压缩并缓存）----------
+# ---------- 图片加载（压缩并缓存，调试输出）----------
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_images_from_materials(file_names):
     data_map = {}
+    missing = []
     materials_dir = Path("materials")
     for fname in file_names:
         img_path = materials_dir / fname
         if not img_path.exists():
+            missing.append(fname)
             continue
         try:
             img = Image.open(img_path)
@@ -62,7 +64,10 @@ def load_images_from_materials(file_names):
             data_url = f"data:image/jpeg;base64,{base64.b64encode(img_bytes).decode()}"
             data_map[fname] = data_url
         except:
-            pass
+            missing.append(fname)
+    # 调试：显示缺失文件（部署后记得移除）
+    if missing:
+        st.warning(f"以下图片文件未在 materials/ 中找到：{', '.join(missing)}")
     return data_map
 
 # ---------- API Key ----------
@@ -129,10 +134,9 @@ def typewriter(ph, text, speed):
         time.sleep(speed)
     ph.markdown(text)
 
-# ---------- 渲染消息（静默处理图片）----------
+# ---------- 渲染消息（兼容中文括号）----------
 def render_message(content):
-    # 统一将所有可能的图片标记格式（包括中文全角括号）转换为英文方括号
-    content = content.replace('【图片:', '[图片:').replace('.png】', '.png]').replace('.jpg】', '.jpg]')
+    content = content.replace('【', '[').replace('】', ']')
     pattern = re.compile(r'\[图片:(.*?)\]')
     parts = pattern.split(content)
     images = []
@@ -149,9 +153,11 @@ def render_message(content):
         data_url = S.oc_image_map.get(img_name)
         if data_url:
             st.image(data_url, width=200, caption=img_name)
+        else:
+            st.caption(f"⚠️ 图片不存在: {img_name}")
 
 def render_message_with_typewriter(content, speed):
-    content = content.replace('【图片:', '[图片:').replace('.png】', '.png]').replace('.jpg】', '.jpg]')
+    content = content.replace('【', '[').replace('】', ']')
     pattern = re.compile(r'\[图片:(.*?)\]')
     parts = pattern.split(content)
     images = []
@@ -172,6 +178,8 @@ def render_message_with_typewriter(content, speed):
         data_url = S.oc_image_map.get(img_name)
         if data_url:
             st.image(data_url, width=200, caption=img_name)
+        else:
+            st.caption(f"⚠️ 图片不存在: {img_name}")
 
 # ---------- 分段相关 ----------
 def random_split(text, min_len, max_len):
@@ -307,13 +315,13 @@ def build_sys(force_image=False):
             base += "\n\n[知识库]\n" + p.read_text(encoding="utf-8")
     
     if S.oc_image_file_names:
-        base += "\n\n你拥有以下表情图片，文件名即图片内容描述：\n"
+        base += "\n\n你拥有以下表情图片：\n"
         for fname in S.oc_image_file_names:
             base += f"- {fname}\n"
         if force_image:
-            base += '【重要】本次回复你必须附带一张图片。在回复的最后一行，严格按照 `[图片:文件名]` 格式输出（例如 `[图片:开坦克.png]`），文件名必须来自上述列表，不能使用中文全角括号【】。'
+            base += "【重要】本次回复你必须附带一张图片。请根据对话内容选择最合适的一张，在回复的末尾单独一行写上 `[图片:文件名]`（例如 `[图片:开坦克.png]`）。必须使用英文方括号！"
         else:
-            base += '【注意】本次回复不要添加任何图片标记。'
+            base += "【注意】本次回复不要添加任何图片标记。"
     
     return base
 
