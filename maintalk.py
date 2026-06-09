@@ -34,7 +34,7 @@ def decode_numeric(pw_str, shift=SHIFT):
     return ''.join(res)
 
 # ---------- OC 文件 ----------
-OC_DIR = Path("oc_profiles")
+OC_DIR = Path(__file__).parent / "oc_profiles"   # 改为绝对路径
 OC_DIR.mkdir(exist_ok=True)
 
 def load_oc(oc_id):
@@ -44,11 +44,11 @@ def load_oc(oc_id):
             return json.load(fh)
     return None
 
-# ---------- 图片加载（强制刷新缓存）----------
-@st.cache_data(ttl=60, show_spinner=False)   # 缓存60秒，便于调试
+# ---------- 图片加载（使用绝对路径）----------
+@st.cache_data(ttl=30, show_spinner=False)   # 缓存30秒
 def load_images_from_materials(file_names):
     data_map = {}
-    materials_dir = Path("materials")
+    materials_dir = Path(__file__).parent / "materials"   # 关键修复
     for fname in file_names:
         img_path = materials_dir / fname
         if not img_path.exists():
@@ -129,7 +129,7 @@ def typewriter(ph, text, speed):
         time.sleep(speed)
     ph.markdown(text)
 
-# ---------- 图片提取（仅识别 [图片:xxx]）----------
+# ---------- 图片提取 ----------
 def extract_image_filename(text):
     pattern = re.compile(r'\[图片:\s*([^\]]+?)\s*\]')
     match = pattern.search(text)
@@ -284,7 +284,7 @@ def build_sys(force_image=False):
     if rules:
         base = "【强制规则，必须无条件遵守】\n" + "\n".join(f"- {r}" for r in rules) + "\n\n" + base
     if S.oc_material:
-        p = Path("materials") / f"{S.oc_material}.txt"
+        p = Path(__file__).parent / "materials" / f"{S.oc_material}.txt"   # 绝对路径
         if p.exists():
             base += "\n\n[知识库]\n" + p.read_text(encoding="utf-8")
     
@@ -295,7 +295,7 @@ def build_sys(force_image=False):
         if force_image:
             base += (
                 "【重要】本次回复你必须附带一张图片。请在回复的末尾严格按照格式 `[图片:文件名]` 输出，"
-                "例如 `[图片:开坦克.png]`。文件名必须从上面列表中选择，不能自己编造。"
+                "例如 `[图片:开坦克.png]`。文件名必须从上面列表中选择。"
             )
         else:
             base += "【注意】本次回复不要添加任何图片标记。"
