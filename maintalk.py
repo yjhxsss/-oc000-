@@ -6,10 +6,11 @@ import time
 import random
 import re
 import base64
-import mimetypes
+import io
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from PIL import Image
 
 # ---------- 密码转换（数字循环偏移）----------
 SHIFT = 1
@@ -43,30 +44,25 @@ def load_oc(oc_id):
             return json.load(fh)
     return None
 
-# ---------- 从 materials 加载图片为 data URL（仅用于前端显示）----------
+# ---------- 图片加载（压缩并缓存）----------
+@st.cache_data(ttl=3600, show_spinner=False)
 def load_images_from_materials(file_names):
-    """返回字典 {文件名: data_url}，同时保存列表顺序"""
     data_map = {}
     materials_dir = Path("materials")
-    if not materials_dir.exists():
-        materials_dir.mkdir(exist_ok=True)
-        return data_map
     for fname in file_names:
         img_path = materials_dir / fname
         if not img_path.exists():
-            st.warning(f"图片文件不存在: {fname}")
             continue
         try:
-            with open(img_path, "rb") as f:
-                img_bytes = f.read()
-            mime_type, _ = mimetypes.guess_type(img_path)
-            if not mime_type or not mime_type.startswith("image/"):
-                mime_type = "image/jpeg"
-            b64_str = base64.b64encode(img_bytes).decode("utf-8")
-            data_url = f"data:{mime_type};base64,{b64_str}"
+            img = Image.open(img_path)
+            img.thumbnail((300, 300))
+            buf = io.BytesIO()
+            img.save(buf, format='JPEG', quality=70)
+            img_bytes = buf.getvalue()
+            data_url = f"data:image/jpeg;base64,{base64.b64encode(img_bytes).decode()}"
             data_map[fname] = data_url
-        except Exception as e:
-            st.warning(f"读取图片 {fname} 失败: {e}")
+        except:
+            pass
     return data_map
 
 # ---------- API Key ----------
@@ -133,7 +129,54 @@ def typewriter(ph, text, speed):
         time.sleep(speed)
     ph.markdown(text)
 
-# ---------- 分段函数 ----------
+# ---------- 渲染消息（带图片处理）----------
+def render_message(content):
+    """历史消息渲染：文本 + 图片"""
+    pattern = re.compile(r'\[图片:(.*?)\]')
+    parts = pattern.split(content)
+    images = []
+    text_parts = []
+    for i, part in enumerate(parts):
+        if i % 2 == 1:
+            images.append(part)
+        else:
+            text_parts.append(part)
+    clean_text = ''.join(text_parts).strip()
+    if clean_text:
+        st.markdown(clean_text)
+    for img_name in images:
+        data_url = S.oc_image_map.get(img_name)
+        if data_url:
+            st.image(data_url, width=200, caption=img_name)
+        else:
+            st.caption(f"图片不存在: {img_name}")
+
+def render_message_with_typewriter(content, speed):
+    """逐字输出文本，然后显示图片"""
+    pattern = re.compile(r'\[图片:(.*?)\]')
+    parts = pattern.split(content)
+    images = []
+    text_parts = []
+    for i, part in enumerate(parts):
+        if i % 2 == 1:
+            images.append(part)
+        else:
+            text_parts.append(part)
+    clean_text = ''.join(text_parts).strip()
+    if clean_text:
+        placeholder = st.empty()
+        if speed > 0:
+            typewriter(placeholder, clean_text, speed)
+        else:
+            placeholder.markdown(clean_text)
+    for img_name in images:
+        data_url = S.oc_image_map.get(img_name)
+        if data_url:
+            st.image(data_url, width=200, caption=img_name)
+        else:
+            st.caption(f"图片不存在: {img_name}")
+
+# ---------- 分段相关 ----------
 def random_split(text, min_len, max_len):
     segments = []
     i = 0
@@ -158,68 +201,19 @@ def split_paragraphs(text, panic_mode=None):
         paras = re.split(r'\n{2,}', text.strip())
         return [p.strip() for p in paras if p.strip()] if len(paras) > 1 else [text]
 
-# ---------- 渲染消息（支持图片标记替换）----------
-def render_message(content):
-    """将消息中的 [图片:文件名] 替换为真正的图片 HTML"""
-    def replace_img(match):
-        img_name = match.group(1)
-        # 从图片映射中获取 data_url
-        data_url = S.oc_image_map.get(img_name)
-        if data_url:
-            return f'<img src="{data_url}" style="max-width:200px; border-radius:10px; margin:8px 0;">'
-        else:
-            return f'[图片不存在: {img_name}]'
-    # 匹配 [图片:文件名] 格式
-    rendered = re.sub(r'\[图片:(.*?)\]', replace_img, content)
-    return rendered
-
 def send_paragraphs(paragraphs, speed):
-    S = st.session_state
     for idx, para in enumerate(paragraphs):
-        # 先渲染图片标记（替换为真正的图片 HTML）
-        rendered_para = render_message(para)
         with st.chat_message("assistant"):
-            placeholder = st.empty()
-            # 如果段落中包含图片 HTML，直接一次性渲染（避免逐字打印图片标签）
-            if '<img' in rendered_para:
-                placeholder.markdown(rendered_para, unsafe_allow_html=True)
-            else:
-                typewriter(placeholder, rendered_para, speed)
-        # 存储原始消息（包含图片标记，不含 HTML）
+            render_message_with_typewriter(para, speed)
         S.msgs.append({
             "role": "assistant",
-            "content": para,   # 原始标记
+            "content": para,
             "timestamp": now_beijing_timestamp()
         })
         if idx != len(paragraphs) - 1:
             time.sleep(0.2)
 
-# ---------- 标记所有未读用户消息为已读 ----------
-def mark_previous_messages_read():
-    for msg in st.session_state.msgs:
-        if msg["role"] == "user" and not msg.get("read", False):
-            msg["read"] = True
-
-# ---------- 历史消息截断（节省 token）----------
-MAX_HISTORY = 20
-
-def get_history_msgs():
-    if len(st.session_state.msgs) > MAX_HISTORY:
-        return st.session_state.msgs[-MAX_HISTORY:]
-    return st.session_state.msgs
-
-# ---------- 清洗消息（无需额外处理，因为存储的是短标记）----------
-def prepare_msgs(msgs):
-    out = []
-    for m in msgs:
-        if m.get("silent"): continue
-        d = {"role": m["role"]}
-        if "content" in m and m["content"] is not None:
-            d["content"] = m["content"]   # 直接使用原始标记（很短）
-        out.append(d)
-    return out
-
-# ---------- CSS（聊天气泡）----------
+# ---------- CSS ----------
 def inject_css():
     st.markdown("""
         <style>
@@ -263,10 +257,10 @@ defaults = {
     "auto_pending":False, "auto_text":"",
     "pw_error":"", "prev_oc":None,
     "stage":None, "last_prompt":None, "use_ai_urg":False,
-    "ai_busy":False, "queue":[], 
-    "oc_image_map":{},               # 文件名 -> data_url 映射
-    "oc_image_file_names":[],        # 文件名列表
-    "oc_image_prob":0.0              # AI 发送图片的概率（在系统提示中告知）
+    "ai_busy":False, "queue":[],
+    "oc_image_map":{},
+    "oc_image_file_names":[],
+    "oc_image_prob":0.0
 }
 for k,v in defaults.items():
     if k not in S:
@@ -275,7 +269,7 @@ for k,v in defaults.items():
 def now_beijing_timestamp():
     return datetime.now(ZoneInfo("Asia/Shanghai")).timestamp()
 
-# ---------- 主动消息生成与发送 ----------
+# ---------- 主动消息 ----------
 def gen_auto():
     key = get_key()
     if not key: return
@@ -300,10 +294,8 @@ def send_auto():
     txt = S.auto_text
     S.auto_pending = False
     S.auto_text = ""
-    # 主动消息也可能包含图片标记，同样需要渲染
-    rendered = render_message(txt)
     with st.chat_message("assistant"):
-        st.markdown(rendered, unsafe_allow_html=True)
+        render_message(txt)   # 无打字机，直接显示
     S.msgs.append({"role":"assistant","content":txt,"timestamp":now_beijing_timestamp()})
 
 def build_sys():
@@ -316,13 +308,34 @@ def build_sys():
         p = Path("materials") / f"{S.oc_material}.txt"
         if p.exists():
             base += "\n\n[知识库]\n" + p.read_text(encoding="utf-8")
-    # 告知 AI 图片发送规则
     if S.oc_image_file_names and S.oc_image_prob > 0:
-        base += f"\n\n你有 {S.oc_image_prob*100:.0f}% 的概率在回复中附带一张图片。你可以主动选择是否发送图片，以及发送哪张。图片列表如下（用文件名标识）：\n"
-        for idx, fname in enumerate(S.oc_image_file_names):
-            base += f"- {fname} (索引 {idx})\n"
-        base += "如果你决定发送图片，请在回复的**末尾**单独一行写上 `[图片:文件名]`（例如 `[图片:cat.jpg]`）。注意：不要写其他解释，只写这个标记。"
+        base += f"\n\n你有 {S.oc_image_prob*100:.0f}% 的概率在回复中附带一张图片。如果你决定发送图片，请在回复的**末尾**单独一行写上 `[图片:文件名]`（例如 `[图片:cat.jpg]`），文件名从以下列表选择：\n"
+        for fname in S.oc_image_file_names:
+            base += f"- {fname}\n"
+        base += "注意：不要写其他解释，只写这个标记。"
     return base
+
+def get_history_msgs(max_len=12):
+    msgs = S.msgs
+    return msgs[-max_len:]
+
+def prepare_msgs(msgs):
+    out = []
+    for m in msgs:
+        if m.get("silent"): continue
+        d = {"role": m["role"]}
+        if "content" in m and m["content"] is not None:
+            content = m["content"]
+            # 替换图片标记为简短占位符，保留语义
+            content = re.sub(r'\[图片:.*?\]', '[图片]', content).strip()
+            d["content"] = content if content else "…"
+        out.append(d)
+    return out
+
+def mark_previous_messages_read():
+    for msg in S.msgs:
+        if msg["role"] == "user" and not msg.get("read", False):
+            msg["read"] = True
 
 # ---------- 界面 ----------
 if S.oc_name:
@@ -384,10 +397,8 @@ if pw != S.oc_pw:
                 S.auto_prob = prof.get("auto_message_probability",0.0)
                 S.auto_prompt = prof.get("auto_message_prompt","你可以偶尔主动聊聊天。")
                 S.use_ai_urg = prof.get("use_ai_urgency",False)
-                # 加载图片映射（仅用于前端显示）
-                raw_image_files = prof.get("image_pool", [])
-                S.oc_image_file_names = raw_image_files
-                S.oc_image_map = load_images_from_materials(raw_image_files)
+                S.oc_image_file_names = prof.get("image_pool", [])
+                S.oc_image_map = load_images_from_materials(S.oc_image_file_names)
                 S.oc_image_prob = prof.get("image_attachment_probability", 0.0)
                 S.pw_error = ""
                 if S.prev_oc != oid_str:
@@ -400,9 +411,10 @@ if pw != S.oc_pw:
             S.oc_id = None
             S.pw_error = "密码无效（需包含数字）"
 
-# ---------- 渲染消息 ----------
+# ---------- 渲染历史消息 ----------
+visible_msgs = S.msgs[-30:] if len(S.msgs) > 30 else S.msgs
 prev_t = None
-for i, msg in enumerate(S.msgs):
+for i, msg in enumerate(visible_msgs):
     if msg["role"] == "tool" or msg.get("silent"): continue
     if msg["role"] == "assistant" and not msg.get("content"): continue
 
@@ -418,11 +430,11 @@ for i, msg in enumerate(S.msgs):
             st.markdown(msg["content"])
             st.caption("已读" if is_read else "未读")
     else:
-        # 渲染助手的消息（将图片标记替换为真实图片）
-        rendered = render_message(msg["content"])
         with st.chat_message("assistant"):
-            st.markdown(rendered, unsafe_allow_html=True)
+            # 历史消息使用 render_message（无打字机）
+            render_message(msg["content"])
 
+# ---------- 铃铛 ----------
 col_a, col_b = st.columns([9,1])
 with col_b:
     bell_label = "🔔" + (" 🔴" if S.auto_pending else "")
@@ -432,7 +444,7 @@ if bell and S.auto_pending:
     send_auto()
     st.rerun()
 
-# ---------- 聊天输入（无图片上传）----------
+# ---------- 聊天输入 ----------
 user_input = st.chat_input("输入消息...")
 
 if user_input:
@@ -504,12 +516,12 @@ if S.stage == "generating":
     ph.empty()
     if full and full.strip():
         full = re.sub(r"\[URGENCY:\d+\.?\d*\]","",full).strip()
-        # 应用特效（注意：图片标记 [图片:xxx] 不会被特效改变，因为是纯文本）
         processed = apply_effects(full, S.oc_typo, S.oc_emoji, S.oc_punct)
-        # 分段
+        speed = S.oc_speed
+        if urgency >= S.oc_urg_thresh and S.oc_panic:
+            speed *= S.oc_panic.get("speed_multiplier", 1.0)
         paragraphs = split_paragraphs(processed, S.oc_panic if urgency >= S.oc_urg_thresh else None)
-        # 发送并渲染（会自动处理图片标记）
-        send_paragraphs(paragraphs, S.oc_speed)
+        send_paragraphs(paragraphs, speed)
 
     if S.auto_prob > 0 and random.random() < S.auto_prob:
         gen_auto()
