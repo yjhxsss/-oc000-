@@ -129,42 +129,57 @@ def typewriter(ph, text, speed):
         time.sleep(speed)
     ph.markdown(text)
 
-# ---------- 图片提取（核心：标准格式 [图片:xxx]）----------
-def extract_image_filename(text):
-    """从文本中提取第一个匹配 [图片:xxx] 的文件名，若无则返回 None"""
-    # 支持中文冒号和英文冒号
+# ---------- 终极图片提取（标记优先，全局兜底）----------
+def find_image_in_message(text):
+    """
+    返回 (clean_text, images_list)
+    1. 优先匹配 [图片:xxx] 或 [图片：xxx] 标记
+    2. 如果没有标记，则扫描全文，找出所有 image_pool 中的文件名（精确包含）
+    """
+    # 第一步：尝试提取标准标记
     pattern = re.compile(r'\[图片[:：]\s*([^\]]+?)\s*\]')
-    match = pattern.search(text)
-    if match:
-        return match.group(1).strip()
-    return None
+    matches = pattern.findall(text)
+    if matches:
+        # 移除标记
+        clean = pattern.sub('', text).strip()
+        # 去重且只保留存在于 image_map 中的
+        valid_images = [m.strip() for m in matches if m.strip() in S.oc_image_map]
+        return clean, valid_images
+
+    # 第二步：全局文件名扫描（精确包含）
+    clean = text
+    found = []
+    # 按文件名长度降序扫描，避免短名误匹配
+    for fname in sorted(S.oc_image_file_names, key=len, reverse=True):
+        if fname in clean:
+            found.append(fname)
+            # 移除该文件名，避免重复显示
+            clean = clean.replace(fname, '', 1)
+    return clean.strip(), found
 
 def render_message(content):
     """历史消息渲染（无打字机）"""
-    img_name = extract_image_filename(content)
-    # 移除图片标记，显示纯文本
-    clean = re.sub(r'\[图片[:：][^\]]*\]', '', content).strip()
+    clean, images = find_image_in_message(content)
     if clean:
         st.markdown(clean)
-    if img_name:
-        data_url = S.oc_image_map.get(img_name)
+    for img in images:
+        data_url = S.oc_image_map.get(img)
         if data_url:
-            st.image(data_url, width=200, caption=img_name)
+            st.image(data_url, width=200, caption=img)
 
 def render_message_with_typewriter(content, speed):
     """打字机效果 + 图片"""
-    img_name = extract_image_filename(content)
-    clean = re.sub(r'\[图片[:：][^\]]*\]', '', content).strip()
+    clean, images = find_image_in_message(content)
     if clean:
         placeholder = st.empty()
         if speed > 0:
             typewriter(placeholder, clean, speed)
         else:
             placeholder.markdown(clean)
-    if img_name:
-        data_url = S.oc_image_map.get(img_name)
+    for img in images:
+        data_url = S.oc_image_map.get(img)
         if data_url:
-            st.image(data_url, width=200, caption=img_name)
+            st.image(data_url, width=200, caption=img)
 
 # ---------- 分段相关 ----------
 def random_split(text, min_len, max_len):
@@ -304,12 +319,9 @@ def build_sys(force_image=False):
         for fname in S.oc_image_file_names:
             base += f"- {fname}\n"
         if force_image:
-            base += (
-                "【重要】本次回复你必须附带一张图片。请在最末尾使用格式 `[图片:文件名]`（英文方括号，英文冒号），"
-                "例如 `[图片:开坦克.png]`。文件名必须从上面列表中选择，不能自己编造。"
-            )
+            base += "【重要】本次回复你必须附带一张图片。直接把图片的文件名放在回复中即可，无需加括号。"
         else:
-            base += "【注意】本次回复不要添加任何图片标记。"
+            base += "【注意】本次回复不要添加任何图片文件名。"
     
     return base
 
@@ -323,7 +335,6 @@ def prepare_msgs(msgs):
         d = {"role": m["role"]}
         if "content" in m and m["content"] is not None:
             content = m["content"]
-            # 替换图片标记为占位符
             content = re.sub(r'\[图片[:：][^\]]*\]', '[图片]', content).strip()
             d["content"] = content if content else "…"
         out.append(d)
@@ -407,6 +418,25 @@ if pw != S.oc_pw:
         else:
             S.oc_id = None
             S.pw_error = "密码无效（需包含数字）"
+
+# ---------- 侧边栏：图片调试面板 ----------
+with st.sidebar:
+    st.subheader("🖼️ 图片状态")
+    if S.oc_image_file_names:
+        for fname in S.oc_image_file_names:
+            if fname in S.oc_image_map:
+                st.success(f"✅ {fname}")
+            else:
+                st.error(f"❌ 缺失: {fname}")
+        st.markdown("---")
+        test_img = st.text_input("测试图片文件名", placeholder="例如 奶龙委屈卖萌.png")
+        if st.button("测试显示图片"):
+            if test_img in S.oc_image_map:
+                st.image(S.oc_image_map[test_img], width=200, caption=test_img)
+            else:
+                st.warning("文件不存在或未加载")
+    else:
+        st.info("当前角色未配置图片池")
 
 # ---------- 渲染历史消息 ----------
 visible_msgs = S.msgs[-30:] if len(S.msgs) > 30 else S.msgs
