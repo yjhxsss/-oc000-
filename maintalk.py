@@ -44,21 +44,18 @@ def load_oc(oc_id):
             return json.load(fh)
     return None
 
-# ---------- 图片加载（修复 RGBA/P 转换 + 调试输出）----------
+# ---------- 图片加载（RGBA/P 转 RGB，无缓存）----------
 def load_images_from_materials(file_names):
     data_map = {}
     base_dir = Path(__file__).parent if "__file__" in dir() else Path.cwd()
     materials_dir = base_dir / "materials"
-    debug_info = []
     for fname in file_names:
         img_path = materials_dir / fname
         if not img_path.exists():
-            debug_info.append(f"❌ {fname} → 文件不存在")
             continue
         try:
             img = Image.open(img_path)
             img.thumbnail((300, 300))
-            # 关键修复：将 RGBA/P 模式转换为 RGB
             if img.mode in ('RGBA', 'P'):
                 img = img.convert('RGB')
             buf = io.BytesIO()
@@ -66,10 +63,8 @@ def load_images_from_materials(file_names):
             img_bytes = buf.getvalue()
             data_url = f"data:image/jpeg;base64,{base64.b64encode(img_bytes).decode()}"
             data_map[fname] = data_url
-            debug_info.append(f"✅ {fname}")
-        except Exception as e:
-            debug_info.append(f"❌ {fname} → {e}")
-    st.session_state.image_debug = debug_info
+        except:
+            pass
     return data_map
 
 # ---------- API Key ----------
@@ -136,11 +131,15 @@ def typewriter(ph, text, speed):
         time.sleep(speed)
     ph.markdown(text)
 
-# ---------- 图片提取 ----------
+# ---------- 图片提取（忽略空文件名）----------
 def extract_image_filename(text):
     pattern = re.compile(r'\[图片:\s*([^\]]+?)\s*\]')
     match = pattern.search(text)
-    return match.group(1).strip() if match else None
+    if match:
+        fname = match.group(1).strip()
+        if fname:   # 忽略空字符串
+            return fname
+    return None
 
 def render_message(content):
     img_name = extract_image_filename(content)
@@ -246,8 +245,7 @@ defaults = {
     "ai_busy":False, "queue":[],
     "oc_image_map":{},
     "oc_image_file_names":[],
-    "oc_image_prob":0.0,
-    "image_debug": []
+    "oc_image_prob":0.0
 }
 for k,v in defaults.items():
     if k not in S:
@@ -303,7 +301,7 @@ def build_sys(force_image=False):
         if force_image:
             base += (
                 "【重要】本次回复你必须附带一张图片。请在回复的末尾严格按照格式 `[图片:文件名]` 输出，"
-                "例如 `[图片:开坦克.png]`。文件名必须从上面列表中选择。"
+                "例如 `[图片:开坦克.png]`。必须写出完整文件名，绝不能只写 `[图片]` 或 `[图片:]`。"
             )
         else:
             base += "【注意】本次回复不要添加任何图片标记。"
@@ -320,6 +318,7 @@ def prepare_msgs(msgs):
         d = {"role": m["role"]}
         if "content" in m and m["content"] is not None:
             content = m["content"]
+            # 保留占位符，但避免空字符
             content = re.sub(r'\[图片:[^\]]*\]', '[图片]', content).strip()
             d["content"] = content if content else "…"
         out.append(d)
@@ -403,12 +402,6 @@ if pw != S.oc_pw:
         else:
             S.oc_id = None
             S.pw_error = "密码无效（需包含数字）"
-
-# 图片调试面板
-if S.oc_image_file_names and hasattr(S, "image_debug"):
-    with st.expander("🖼️ 图片加载状态", expanded=True):
-        for line in S.image_debug:
-            st.markdown(line)
 
 # ---------- 渲染历史消息 ----------
 visible_msgs = S.msgs[-30:] if len(S.msgs) > 30 else S.msgs
