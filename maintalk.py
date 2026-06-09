@@ -129,18 +129,16 @@ def typewriter(ph, text, speed):
         time.sleep(speed)
     ph.markdown(text)
 
-# ---------- 渲染消息（兼容中英文括号）----------
+# ---------- 渲染消息（万能括号兼容，忽略空文件名）----------
 def normalize_image_markers(content):
-    """将所有可能的图片标记统一为 [图片:xxx] 格式"""
-    # 中文全角括号
+    """将各种可能的括号统一转为英文方括号"""
     content = content.replace('【', '[').replace('】', ']')
-    # 中文圆括号（AI 常用错误）
     content = content.replace('（', '[').replace('）', ']')
-    # 英文圆括号（防止极少数情况）
     content = content.replace('(', '[').replace(')', ']')
     return content
 
-def render_message(content):
+def extract_images(content):
+    """从文本中提取有效的图片文件名，返回 (纯文本, 图片列表)"""
     content = normalize_image_markers(content)
     pattern = re.compile(r'\[图片:(.*?)\]')
     parts = pattern.split(content)
@@ -148,10 +146,17 @@ def render_message(content):
     text_parts = []
     for i, part in enumerate(parts):
         if i % 2 == 1:
-            images.append(part.strip())
+            fname = part.strip()
+            if fname:   # 忽略空文件名（如 [图片]）
+                images.append(fname)
         else:
             text_parts.append(part)
     clean_text = ''.join(text_parts).strip()
+    return clean_text, images
+
+def render_message(content):
+    """历史消息渲染（无打字机）"""
+    clean_text, images = extract_images(content)
     if clean_text:
         st.markdown(clean_text)
     for img_name in images:
@@ -160,17 +165,8 @@ def render_message(content):
             st.image(data_url, width=200, caption=img_name)
 
 def render_message_with_typewriter(content, speed):
-    content = normalize_image_markers(content)
-    pattern = re.compile(r'\[图片:(.*?)\]')
-    parts = pattern.split(content)
-    images = []
-    text_parts = []
-    for i, part in enumerate(parts):
-        if i % 2 == 1:
-            images.append(part.strip())
-        else:
-            text_parts.append(part)
-    clean_text = ''.join(text_parts).strip()
+    """打字机效果 + 图片"""
+    clean_text, images = extract_images(content)
     if clean_text:
         placeholder = st.empty()
         if speed > 0:
@@ -320,7 +316,12 @@ def build_sys(force_image=False):
         for fname in S.oc_image_file_names:
             base += f"- {fname}\n"
         if force_image:
-            base += "【重要】本次回复你必须附带一张图片。请根据对话内容选择最合适的一张，在回复的末尾单独一行严格按照格式 `[图片:文件名]` 输出，例如 `[图片:开坦克.png]`。必须使用英文方括号，不得使用圆括号或中文括号。"
+            base += (
+                "【重要】本次回复你必须附带一张图片。请根据对话内容选择最合适的一张，"
+                "在回复的末尾单独一行严格按照格式 `[图片:文件名]` 输出，例如 `[图片:开坦克.png]`。"
+                "必须写出完整的文件名，绝对不能只写 `[图片]` 或 `[图片:]`。"
+                "必须使用英文方括号。"
+            )
         else:
             base += "【注意】本次回复不要添加任何图片标记。"
     
@@ -336,6 +337,7 @@ def prepare_msgs(msgs):
         d = {"role": m["role"]}
         if "content" in m and m["content"] is not None:
             content = m["content"]
+            # 替换所有图片标记为[图片]（保留语义）
             content = re.sub(r'\[图片:.*?\]', '[图片]', content).strip()
             d["content"] = content if content else "…"
         out.append(d)
