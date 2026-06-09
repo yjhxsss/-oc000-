@@ -191,6 +191,13 @@ def send_paragraphs(paragraphs, speed):
         if idx != len(paragraphs) - 1:
             time.sleep(0.2)
 
+# ---------- 标记所有未读用户消息为已读 ----------
+def mark_previous_messages_read():
+    """将历史中所有未读的用户消息标记为已读"""
+    for msg in st.session_state.msgs:
+        if msg["role"] == "user" and not msg.get("read", False):
+            msg["read"] = True
+
 # ---------- CSS（聊天气泡）----------
 def inject_css():
     st.markdown("""
@@ -300,7 +307,7 @@ def prepare_msgs(msgs):
         d = {"role":m["role"]}
         if "content" in m and m["content"] is not None:
             d["content"] = m["content"]
-        # 用户上传的图片已完全移除，此处不再处理
+        # 用户图片已完全移除，此处不再处理
         if "tool_calls" in m:
             d["tool_calls"] = m["tool_calls"]
         if "tool_call_id" in m:
@@ -398,18 +405,8 @@ for i, msg in enumerate(S.msgs):
     if msg["role"] == "tool" or msg.get("silent"): continue
     if msg["role"] == "assistant" and not msg.get("content"): continue
 
-    is_read = False
-    if msg["role"] == "user":
-        if msg.get("read"):
-            is_read = True
-        else:
-            for j in range(i+1, len(S.msgs)):
-                nxt = S.msgs[j]
-                if nxt["role"] in ("assistant","tool"):
-                    is_read = True
-                    break
-                if nxt["role"] == "user":
-                    break
+    # 已读状态直接从消息的 read 字段读取（标记由 mark_previous_messages_read 保证）
+    is_read = msg.get("read", False) if msg["role"] == "user" else False
 
     if prev_t is None or msg["timestamp"] - prev_t >= 1200:
         dt = datetime.fromtimestamp(msg["timestamp"], tz=ZoneInfo("Asia/Shanghai"))
@@ -474,6 +471,9 @@ if S.stage == "generating":
         st.rerun()
 
     S.ai_busy = True
+    # 在调用 API 前将所有未读消息标记为已读
+    mark_previous_messages_read()
+    
     tools, execs = load_skills()
     cl = openai.OpenAI(api_key=key, base_url="https://api.deepseek.com")
     sys = build_sys()
