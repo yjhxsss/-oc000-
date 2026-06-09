@@ -137,21 +137,22 @@ def extract_image_filename(text):
     match = pattern.search(text)
     if match:
         fname = match.group(1).strip()
-        if fname:   # 忽略空字符串
+        if fname:   # 有具体文件名才返回
             return fname
     return None
 
 def render_message(content):
+    # 移除所有 [图片...] 标记（包括空的），防止显示纯文字“图片”
+    clean = re.sub(r'\[图片[^\]]*\]', '', content).strip()
     img_name = extract_image_filename(content)
-    clean = re.sub(r'\[图片:[^\]]*\]', '', content).strip()
     if clean:
         st.markdown(clean)
     if img_name and img_name in S.oc_image_map:
         st.image(S.oc_image_map[img_name], width=200, caption=img_name)
 
 def render_message_with_typewriter(content, speed):
+    clean = re.sub(r'\[图片[^\]]*\]', '', content).strip()
     img_name = extract_image_filename(content)
-    clean = re.sub(r'\[图片:[^\]]*\]', '', content).strip()
     if clean:
         placeholder = st.empty()
         if speed > 0:
@@ -304,7 +305,7 @@ def build_sys(force_image=False):
                 "例如 `[图片:开坦克.png]`。必须写出完整文件名，绝不能只写 `[图片]` 或 `[图片:]`。"
             )
         else:
-            base += "【注意】本次回复不要添加任何图片标记。"
+            base += "【注意】本次回复不要添加任何图片标记，严禁输出 `[图片]` 字样。"
     
     return base
 
@@ -318,8 +319,7 @@ def prepare_msgs(msgs):
         d = {"role": m["role"]}
         if "content" in m and m["content"] is not None:
             content = m["content"]
-            # 保留占位符，但避免空字符
-            content = re.sub(r'\[图片:[^\]]*\]', '[图片]', content).strip()
+            content = re.sub(r'\[图片[^\]]*\]', '[图片]', content).strip()
             d["content"] = content if content else "…"
         out.append(d)
     return out
