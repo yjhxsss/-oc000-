@@ -129,9 +129,11 @@ def typewriter(ph, text, speed):
         time.sleep(speed)
     ph.markdown(text)
 
-# ---------- 渲染消息（万能括号兼容，忽略空文件名）----------
+# ---------- 渲染消息（终极兼容）----------
 def normalize_image_markers(content):
-    """将各种可能的括号统一转为英文方括号"""
+    """将所有可能的符号统一为英文方括号和冒号"""
+    content = content.replace('：', ':')              # 中文冒号
+    content = content.replace('；', ':')              # 全角分号
     content = content.replace('【', '[').replace('】', ']')
     content = content.replace('（', '[').replace('）', ']')
     content = content.replace('(', '[').replace(')', ']')
@@ -140,14 +142,15 @@ def normalize_image_markers(content):
 def extract_images(content):
     """从文本中提取有效的图片文件名，返回 (纯文本, 图片列表)"""
     content = normalize_image_markers(content)
-    pattern = re.compile(r'\[图片:(.*?)\]')
+    # 匹配 [图片: xxx] 或 [图片：xxx] 等，支持前后空格
+    pattern = re.compile(r'\[图片\s*[:：]\s*(.*?)\s*\]')
     parts = pattern.split(content)
     images = []
     text_parts = []
     for i, part in enumerate(parts):
         if i % 2 == 1:
             fname = part.strip()
-            if fname:   # 忽略空文件名（如 [图片]）
+            if fname and not fname.startswith(':'):   # 避免空文件名
                 images.append(fname)
         else:
             text_parts.append(part)
@@ -318,9 +321,8 @@ def build_sys(force_image=False):
         if force_image:
             base += (
                 "【重要】本次回复你必须附带一张图片。请根据对话内容选择最合适的一张，"
-                "在回复的末尾单独一行严格按照格式 `[图片:文件名]` 输出，例如 `[图片:开坦克.png]`。"
+                "在回复的末尾单独一行严格按照格式 `[图片:文件名]` 输出（使用英文方括号和英文冒号），例如 `[图片:开坦克.png]`。"
                 "必须写出完整的文件名，绝对不能只写 `[图片]` 或 `[图片:]`。"
-                "必须使用英文方括号。"
             )
         else:
             base += "【注意】本次回复不要添加任何图片标记。"
@@ -337,8 +339,7 @@ def prepare_msgs(msgs):
         d = {"role": m["role"]}
         if "content" in m and m["content"] is not None:
             content = m["content"]
-            # 替换所有图片标记为[图片]（保留语义）
-            content = re.sub(r'\[图片:.*?\]', '[图片]', content).strip()
+            content = re.sub(r'\[图片[:：]\s*.*?\]', '[图片]', content).strip()
             d["content"] = content if content else "…"
         out.append(d)
     return out
