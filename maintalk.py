@@ -5,6 +5,7 @@ import os
 import time
 import random
 import re
+import base64
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -16,7 +17,6 @@ import skills
 SHIFT = 1   # 偏移量，可修改
 
 def encode_numeric(n_str, shift=SHIFT):
-    """将数字字符串编码为偏移后的字符串（用于生成密码）"""
     res = []
     for ch in n_str:
         if '0' <= ch <= '9':
@@ -26,7 +26,6 @@ def encode_numeric(n_str, shift=SHIFT):
     return ''.join(res)
 
 def decode_numeric(pw_str, shift=SHIFT):
-    """将偏移密码解码回原数字"""
     res = []
     for ch in pw_str:
         if '0' <= ch <= '9':
@@ -152,6 +151,7 @@ def split_paragraphs(text, panic_mode=None):
         return [p.strip() for p in paras if p.strip()] if len(paras) > 1 else [text]
 
 def send_paragraphs(paragraphs, speed):
+    S = st.session_state
     for idx, para in enumerate(paragraphs):
         with st.chat_message("assistant"):
             placeholder = st.empty()
@@ -185,6 +185,12 @@ def inject_css():
             background:linear-gradient(135deg,#fff3e0,#ffe0b2); border:2px solid #ffa726;
             border-radius:6px 20px 20px 20px; margin-right:8px;
         }
+        /* 图片在气泡中的样式 */
+        div[data-testid="stChatMessageContent"] img {
+            max-width: 200px;
+            border-radius: 10px;
+            margin: 8px 0;
+        }
         .time-divider {text-align:center; color:#999; font-size:0.85em; margin:16px 0 8px 0;}
         </style>
     """, unsafe_allow_html=True)
@@ -203,7 +209,9 @@ defaults = {
     "auto_pending":False, "auto_text":"",
     "pw_error":"", "prev_oc":None,
     "stage":None, "last_prompt":None, "use_ai_urg":False,
-    "ai_busy":False, "queue":[]
+    "ai_busy":False, "queue":[], 
+    "oc_image_pool":[],               # 图片池
+    "oc_image_prob":0.0               # AI 附加图片概率
 }
 for k,v in defaults.items():
     if k not in S:
@@ -228,6 +236,8 @@ def gen_auto():
     except:
         txt = "（突然想找你聊聊天…）"
     if txt:
+        # 主动消息也可能附加图片
+        txt = maybe_attach_image(txt)
         txt = apply_effects(txt, S.oc_typo, S.oc_emoji, S.oc_punct)
         S.auto_text = txt
         S.auto_pending = True
@@ -251,6 +261,10 @@ def build_sys():
         p = Path("materials") / f"{S.oc_material}.txt"
         if p.exists():
             base += "\n\n[知识库]\n" + p.read_text(encoding="utf-8")
+    # 在系统提示中加入图片池信息
+    if S.oc_image_pool:
+        img_descriptions = "\n".join([f"- 图片{i+1}: {url}" for i, url in enumerate(S.oc_image_pool)])
+        base += f"\n\n你可以使用以下图片链接来发送图片，在回复中用 Markdown 语法 ![描述](图片URL) 插入。可用图片列表：\n{img_descriptions}"
     return base
 
 def prepare_msgs(msgs):
@@ -260,12 +274,23 @@ def prepare_msgs(msgs):
         d = {"role":m["role"]}
         if "content" in m and m["content"] is not None:
             d["content"] = m["content"]
+        if "image" in m:
+            d["image"] = m["image"]   # 用户发送的图片 base64（已移除上传功能，此字段不再出现）
         if "tool_calls" in m:
             d["tool_calls"] = m["tool_calls"]
         if "tool_call_id" in m:
             d["tool_call_id"] = m["tool_call_id"]
         out.append(d)
     return out
+
+# 随机附加图片到文本末尾
+def maybe_attach_image(text):
+    if S.oc_image_prob > 0 and S.oc_image_pool:
+        if random.random() < S.oc_image_prob:
+            img_url = random.choice(S.oc_image_pool)
+            # 在末尾加上换行和图片标记
+            text += f"\n\n![图片]({img_url})"
+    return text
 
 # ---------- 界面 ----------
 if S.oc_name:
@@ -294,7 +319,7 @@ with col_clear:
 if S.pw_error:
     st.error("❌ 密码无效")
 
-# 密码处理（数字偏移解码）
+# 密码处理
 if pw != S.oc_pw:
     S.oc_pw = pw
     if pw.strip() == "":
@@ -303,7 +328,7 @@ if pw != S.oc_pw:
     else:
         raw = pw.strip()
         oid_str = decode_numeric(raw)
-        oid_str = re.sub(r'\D', '', oid_str)   # 保留数字
+        oid_str = re.sub(r'\D', '', oid_str)
         if oid_str:
             prof = load_oc(oid_str)
             if prof:
@@ -329,6 +354,8 @@ if pw != S.oc_pw:
                 S.auto_prob = prof.get("auto_message_probability",0.0)
                 S.auto_prompt = prof.get("auto_message_prompt","你可以偶尔主动聊聊天。")
                 S.use_ai_urg = prof.get("use_ai_urgency",False)
+                S.oc_image_pool = prof.get("image_pool", [])
+                S.oc_image_prob = prof.get("image_attachment_probability", 0.0)
                 S.pw_error = ""
                 if S.prev_oc != oid_str:
                     S.msgs = []; S.stage = None; S.ai_busy = False; S.queue = []
@@ -382,6 +409,8 @@ if bell and S.auto_pending:
     send_auto()
     st.rerun()
 
+# （用户上传图片功能已完全移除）
+
 # ---------- 聊天输入 ----------
 user_input = st.chat_input("输入消息...")
 
@@ -399,15 +428,10 @@ if user_input:
             send_auto()
         S.msgs.append({"role":"user","content":user_input,"read":False,"timestamp":now_beijing_timestamp()})
         S.last_prompt = user_input
-        S.stage = "mark_read"
+        S.stage = "generating"
         st.rerun()
 
-if S.stage == "mark_read":
-    if S.msgs and S.msgs[-1]["role"] == "user":
-        S.msgs[-1]["read"] = True
-    S.stage = "generating"
-    st.rerun()
-
+# ---------- 生成回复 ----------
 if S.stage == "generating":
     key = get_key()
     if not key: st.stop()
@@ -484,6 +508,8 @@ if S.stage == "generating":
     ph.empty()
     if full and full.strip():
         full = re.sub(r"\[URGENCY:\d+\.?\d*\]","",full).strip()
+        # 应用特效之前，先尝试附加图片
+        full = maybe_attach_image(full)
         speed = S.oc_speed
         panic_mode = None
         if urgency >= S.oc_urg_thresh and S.oc_panic:
@@ -502,5 +528,5 @@ if S.stage == "generating":
         nxt = S.queue.pop(0)
         S.msgs.append({"role":"user","content":nxt,"read":False,"timestamp":now_beijing_timestamp()})
         S.last_prompt = nxt
-        S.stage = "mark_read"
+        S.stage = "generating"
     st.rerun()
