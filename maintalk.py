@@ -151,7 +151,6 @@ def split_paragraphs(text, panic_mode=None):
         return [p.strip() for p in paras if p.strip()] if len(paras) > 1 else [text]
 
 def send_paragraphs(paragraphs, speed):
-    S = st.session_state
     for idx, para in enumerate(paragraphs):
         with st.chat_message("assistant"):
             placeholder = st.empty()
@@ -275,7 +274,7 @@ def prepare_msgs(msgs):
         if "content" in m and m["content"] is not None:
             d["content"] = m["content"]
         if "image" in m:
-            d["image"] = m["image"]   # 用户发送的图片 base64（已移除上传功能，此字段不再出现）
+            d["image"] = m["image"]   # 用户发送的图片 base64
         if "tool_calls" in m:
             d["tool_calls"] = m["tool_calls"]
         if "tool_call_id" in m:
@@ -393,6 +392,8 @@ for i, msg in enumerate(S.msgs):
 
     if msg["role"] == "user":
         with st.chat_message("user"):
+            if msg.get("image"):
+                st.image(base64.b64decode(msg["image"]), width=300)
             st.markdown(msg["content"])
             st.caption("已读" if is_read else "未读")
     else:
@@ -409,7 +410,22 @@ if bell and S.auto_pending:
     send_auto()
     st.rerun()
 
-# （用户上传图片功能已完全移除）
+# ---------- 图片上传区域 ----------
+with st.expander("📷 上传图片（可选）"):
+    uploaded_file = st.file_uploader("选择图片", type=["jpg","jpeg","png"], label_visibility="collapsed")
+    if uploaded_file is not None:
+        img_bytes = uploaded_file.read()
+        img_b64 = base64.b64encode(img_bytes).decode("utf-8")
+        S.msgs.append({
+            "role": "user",
+            "content": "📷 我发了一张图片",
+            "image": img_b64,
+            "read": False,
+            "timestamp": now_beijing_timestamp()
+        })
+        S.last_prompt = "我发了一张图片，请根据你的人物设定回应（注意：你无法真正看见图片，但可以假装看见了并作出有趣的反应）"
+        S.stage = "generating"
+        st.rerun()
 
 # ---------- 聊天输入 ----------
 user_input = st.chat_input("输入消息...")
