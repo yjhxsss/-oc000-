@@ -34,7 +34,7 @@ def decode_numeric(pw_str, shift=SHIFT):
     return ''.join(res)
 
 # ---------- OC 文件 ----------
-OC_DIR = Path(__file__).parent / "oc_profiles"   # 改为绝对路径
+OC_DIR = Path(__file__).parent / "oc_profiles" if "__file__" in dir() else Path("oc_profiles")
 OC_DIR.mkdir(exist_ok=True)
 
 def load_oc(oc_id):
@@ -44,14 +44,23 @@ def load_oc(oc_id):
             return json.load(fh)
     return None
 
-# ---------- 图片加载（使用绝对路径）----------
-@st.cache_data(ttl=30, show_spinner=False)   # 缓存30秒
+# ---------- 图片加载（无缓存，详细调试）----------
 def load_images_from_materials(file_names):
     data_map = {}
-    materials_dir = Path(__file__).parent / "materials"   # 关键修复
+    # 尝试使用脚本所在目录，否则回退到当前工作目录
+    try:
+        base_dir = Path(__file__).parent
+    except NameError:
+        base_dir = Path.cwd()
+    materials_dir = base_dir / "materials"
+    
+    # 用于收集调试信息
+    debug_info = []
+    
     for fname in file_names:
         img_path = materials_dir / fname
         if not img_path.exists():
+            debug_info.append(f"❌ {fname} → 文件不存在于 {img_path}")
             continue
         try:
             img = Image.open(img_path)
@@ -61,8 +70,12 @@ def load_images_from_materials(file_names):
             img_bytes = buf.getvalue()
             data_url = f"data:image/jpeg;base64,{base64.b64encode(img_bytes).decode()}"
             data_map[fname] = data_url
-        except:
-            pass
+            debug_info.append(f"✅ {fname} 加载成功")
+        except Exception as e:
+            debug_info.append(f"❌ {fname} → 加载异常: {str(e)}")
+    
+    # 存储调试信息到 session_state，供界面显示
+    st.session_state.image_debug = debug_info
     return data_map
 
 # ---------- API Key ----------
@@ -239,7 +252,8 @@ defaults = {
     "ai_busy":False, "queue":[],
     "oc_image_map":{},
     "oc_image_file_names":[],
-    "oc_image_prob":0.0
+    "oc_image_prob":0.0,
+    "image_debug": []   # 存储图片加载调试信息
 }
 for k,v in defaults.items():
     if k not in S:
@@ -284,7 +298,7 @@ def build_sys(force_image=False):
     if rules:
         base = "【强制规则，必须无条件遵守】\n" + "\n".join(f"- {r}" for r in rules) + "\n\n" + base
     if S.oc_material:
-        p = Path(__file__).parent / "materials" / f"{S.oc_material}.txt"   # 绝对路径
+        p = Path(__file__).parent / "materials" / f"{S.oc_material}.txt" if "__file__" in dir() else Path("materials") / f"{S.oc_material}.txt"
         if p.exists():
             base += "\n\n[知识库]\n" + p.read_text(encoding="utf-8")
     
@@ -328,11 +342,12 @@ if S.oc_name:
 else:
     st.title("🎭 OC 聊天助手")
 
+# 密码输入行
 col_label, col_input, col_status, col_clear = st.columns([1.5, 4, 0.5, 1])
 with col_label:
     st.markdown("密码状态：")
 with col_input:
-    pw = st.text_input("", key="oc_pw_input", value=S.oc_pw, label_visibility="collapsed")
+    pw = st.text_input("OC 密码", key="oc_pw_input", value=S.oc_pw, label_visibility="collapsed")
 with col_status:
     if S.oc_id is not None:
         st.markdown("✅")
@@ -383,6 +398,7 @@ if pw != S.oc_pw:
                 S.auto_prompt = prof.get("auto_message_prompt","你可以偶尔主动聊聊天。")
                 S.use_ai_urg = prof.get("use_ai_urgency",False)
                 S.oc_image_file_names = prof.get("image_pool", [])
+                # 强制重新加载图片映射（无缓存）
                 S.oc_image_map = load_images_from_materials(S.oc_image_file_names)
                 S.oc_image_prob = prof.get("image_attachment_probability", 0.0)
                 S.pw_error = ""
@@ -395,6 +411,12 @@ if pw != S.oc_pw:
         else:
             S.oc_id = None
             S.pw_error = "密码无效（需包含数字）"
+
+# 显示图片加载调试信息
+if S.oc_image_file_names and hasattr(S, "image_debug"):
+    with st.expander("🖼️ 图片加载状态", expanded=True):
+        for line in S.image_debug:
+            st.markdown(line)
 
 # ---------- 渲染历史消息 ----------
 visible_msgs = S.msgs[-30:] if len(S.msgs) > 30 else S.msgs
