@@ -129,16 +129,15 @@ def typewriter(ph, text, speed):
         time.sleep(speed)
     ph.markdown(text)
 
-# ---------- 渲染消息（带图片处理）----------
+# ---------- 渲染消息（带图片处理，静默失败）----------
 def render_message(content):
-    """历史消息渲染：文本 + 图片（无打字机）"""
     pattern = re.compile(r'\[图片:(.*?)\]')
     parts = pattern.split(content)
     images = []
     text_parts = []
     for i, part in enumerate(parts):
         if i % 2 == 1:
-            images.append(part)
+            images.append(part.strip())
         else:
             text_parts.append(part)
     clean_text = ''.join(text_parts).strip()
@@ -148,18 +147,15 @@ def render_message(content):
         data_url = S.oc_image_map.get(img_name)
         if data_url:
             st.image(data_url, width=200, caption=img_name)
-        else:
-            st.caption(f"图片不存在: {img_name}")
 
 def render_message_with_typewriter(content, speed):
-    """逐字输出文本，然后显示图片"""
     pattern = re.compile(r'\[图片:(.*?)\]')
     parts = pattern.split(content)
     images = []
     text_parts = []
     for i, part in enumerate(parts):
         if i % 2 == 1:
-            images.append(part)
+            images.append(part.strip())
         else:
             text_parts.append(part)
     clean_text = ''.join(text_parts).strip()
@@ -173,8 +169,6 @@ def render_message_with_typewriter(content, speed):
         data_url = S.oc_image_map.get(img_name)
         if data_url:
             st.image(data_url, width=200, caption=img_name)
-        else:
-            st.caption(f"图片不存在: {img_name}")
 
 # ---------- 分段相关 ----------
 def random_split(text, min_len, max_len):
@@ -275,7 +269,7 @@ def gen_auto():
     if not key: return
     try:
         cl = openai.OpenAI(api_key=key, base_url="https://api.deepseek.com")
-        sys = build_sys()
+        sys = build_sys(force_image=False)   # 主动消息不发图片
         recent = get_history_msgs()[-6:]
         msgs = [{"role":"system","content":sys}] if sys else []
         msgs += prepare_msgs(recent)
@@ -295,10 +289,11 @@ def send_auto():
     S.auto_pending = False
     S.auto_text = ""
     with st.chat_message("assistant"):
-        render_message(txt)   # 无打字机，直接显示
+        render_message(txt)
     S.msgs.append({"role":"assistant","content":txt,"timestamp":now_beijing_timestamp()})
 
-def build_sys():
+def build_sys(force_image=False):
+    """force_image: 是否强制本次回复必须附带图片"""
     if S.oc_id is None: return ""
     base = S.oc_base
     rules = S.oc_rules
@@ -309,19 +304,20 @@ def build_sys():
         if p.exists():
             base += "\n\n[知识库]\n" + p.read_text(encoding="utf-8")
     
-    # 🌟 智能图片选择指令：让AI根据文件名理解含义并自主选择
+    # 图片概率控制指令
     if S.oc_image_file_names:
-        base += "\n\n你拥有以下表情图片，可以根据聊天语境选择一张发送。每张图片的含义由其文件名描述。\n"
+        base += "\n\n你拥有以下表情图片，文件名即图片内容描述：\n"
         for fname in S.oc_image_file_names:
-            base += f"- {fname} ：{fname}\n"
-        base += "当你想让回复更生动时，可在末尾加上 `[图片:文件名]`，例如 `[图片:奶龙委屈卖萌.png]`。\n"
-        base += "请根据你当前的情绪或你猜测的用户情绪来选图。如果没有合适的，可以不发。"
+            base += f"- {fname}\n"
+        if force_image:
+            base += "【重要】本次回复你必须附带一张图片。请根据对话内容选择最合适的一张，在回复的末尾单独一行写上 `[图片:文件名]`（例如 `[图片:开坦克.png]`）。不要加其他说明。"
+        else:
+            base += "【注意】本次回复不要添加任何图片标记。"
     
     return base
 
 def get_history_msgs(max_len=12):
-    msgs = S.msgs
-    return msgs[-max_len:]
+    return S.msgs[-max_len:]
 
 def prepare_msgs(msgs):
     out = []
@@ -330,7 +326,6 @@ def prepare_msgs(msgs):
         d = {"role": m["role"]}
         if "content" in m and m["content"] is not None:
             content = m["content"]
-            # 图片标记替换为简短占位符，保留语义
             content = re.sub(r'\[图片:.*?\]', '[图片]', content).strip()
             d["content"] = content if content else "…"
         out.append(d)
@@ -435,7 +430,7 @@ for i, msg in enumerate(visible_msgs):
             st.caption("已读" if is_read else "未读")
     else:
         with st.chat_message("assistant"):
-            render_message(msg["content"])   # 历史消息直接渲染
+            render_message(msg["content"])
 
 # ---------- 铃铛 ----------
 col_a, col_b = st.columns([9,1])
@@ -490,8 +485,14 @@ if S.stage == "generating":
     S.ai_busy = True
     mark_previous_messages_read()
     
+    # 🌟 根据概率决定是否强制 AI 发图
+    force_image = False
+    if S.oc_image_prob > 0 and S.oc_image_file_names:
+        if random.random() < S.oc_image_prob:
+            force_image = True
+
     cl = openai.OpenAI(api_key=key, base_url="https://api.deepseek.com")
-    sys = build_sys()
+    sys = build_sys(force_image=force_image)
     msgs = [{"role":"system","content":sys}] if sys else []
     msgs += prepare_msgs(get_history_msgs())
 
