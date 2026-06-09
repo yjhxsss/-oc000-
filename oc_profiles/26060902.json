@@ -29,6 +29,13 @@
   "auto_message_delay_max": 180,
   "auto_message_prompt": "你可以偶尔主动和对方聊聊天。",
   "use_ai_urgency": true,
-  "image_pool": ["开坦克.png" "奶龙躺了.png" "我们走大吉鸡.png" "小熊维尼-你知道的太多了.png" "给你小红点.png" "找一车奶龙弄你.png" ],
+  "image_pool": [
+    "开坦克.png",
+    "奶龙躺了.png",
+    "我们走大吉鸡.png",
+    "小熊维尼-你知道的太多了.png",
+    "给你小红点.png",
+    "找一车奶龙弄你.png"
+  ],
   "image_attachment_probability": 0.2
 }
