@@ -129,8 +129,10 @@ def typewriter(ph, text, speed):
         time.sleep(speed)
     ph.markdown(text)
 
-# ---------- 渲染消息（带图片处理，静默失败）----------
+# ---------- 渲染消息（静默处理图片）----------
 def render_message(content):
+    # 统一将所有可能的图片标记格式（包括中文全角括号）转换为英文方括号
+    content = content.replace('【图片:', '[图片:').replace('.png】', '.png]').replace('.jpg】', '.jpg]')
     pattern = re.compile(r'\[图片:(.*?)\]')
     parts = pattern.split(content)
     images = []
@@ -149,6 +151,7 @@ def render_message(content):
             st.image(data_url, width=200, caption=img_name)
 
 def render_message_with_typewriter(content, speed):
+    content = content.replace('【图片:', '[图片:').replace('.png】', '.png]').replace('.jpg】', '.jpg]')
     pattern = re.compile(r'\[图片:(.*?)\]')
     parts = pattern.split(content)
     images = []
@@ -269,7 +272,7 @@ def gen_auto():
     if not key: return
     try:
         cl = openai.OpenAI(api_key=key, base_url="https://api.deepseek.com")
-        sys = build_sys(force_image=False)   # 主动消息不发图片
+        sys = build_sys(force_image=False)
         recent = get_history_msgs()[-6:]
         msgs = [{"role":"system","content":sys}] if sys else []
         msgs += prepare_msgs(recent)
@@ -293,7 +296,6 @@ def send_auto():
     S.msgs.append({"role":"assistant","content":txt,"timestamp":now_beijing_timestamp()})
 
 def build_sys(force_image=False):
-    """force_image: 是否强制本次回复必须附带图片"""
     if S.oc_id is None: return ""
     base = S.oc_base
     rules = S.oc_rules
@@ -304,15 +306,14 @@ def build_sys(force_image=False):
         if p.exists():
             base += "\n\n[知识库]\n" + p.read_text(encoding="utf-8")
     
-    # 图片概率控制指令
     if S.oc_image_file_names:
         base += "\n\n你拥有以下表情图片，文件名即图片内容描述：\n"
         for fname in S.oc_image_file_names:
             base += f"- {fname}\n"
         if force_image:
-            base += "【重要】本次回复你必须附带一张图片。请根据对话内容选择最合适的一张，在回复的末尾单独一行写上 `[图片:文件名]`（例如 `[图片:开坦克.png]`）。不要加其他说明。"
+            base += '【重要】本次回复你必须附带一张图片。在回复的最后一行，严格按照 `[图片:文件名]` 格式输出（例如 `[图片:开坦克.png]`），文件名必须来自上述列表，不能使用中文全角括号【】。'
         else:
-            base += "【注意】本次回复不要添加任何图片标记。"
+            base += '【注意】本次回复不要添加任何图片标记。'
     
     return base
 
@@ -485,7 +486,6 @@ if S.stage == "generating":
     S.ai_busy = True
     mark_previous_messages_read()
     
-    # 🌟 根据概率决定是否强制 AI 发图
     force_image = False
     if S.oc_image_prob > 0 and S.oc_image_file_names:
         if random.random() < S.oc_image_prob:
