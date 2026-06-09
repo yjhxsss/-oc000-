@@ -48,7 +48,6 @@ def load_oc(oc_id):
 
 # ---------- 从 materials 加载图片为 data URL ----------
 def load_images_from_materials(file_names):
-    """从 materials 目录读取图片文件，返回 data URL 列表"""
     data_urls = []
     materials_dir = Path("materials")
     if not materials_dir.exists():
@@ -143,8 +142,14 @@ def apply_effects(text, typo_rate, emoji_rate, special_punct):
         text = "".join(sentences)
     return text
 
-# ---------- 打字机 ----------
+# ---------- 打字机（优化：含图片的段落直接完整渲染）----------
 def typewriter(ph, text, speed):
+    # 检测是否包含 Markdown 图片语法
+    if re.search(r'!\[.*?\]\(.*?\)', text):
+        # 直接一次性渲染，不逐字打印
+        ph.markdown(text)
+        return
+    # 否则逐字打印
     disp = ""
     for ch in text:
         disp += ch
@@ -193,7 +198,6 @@ def send_paragraphs(paragraphs, speed):
 
 # ---------- 标记所有未读用户消息为已读 ----------
 def mark_previous_messages_read():
-    """将历史中所有未读的用户消息标记为已读"""
     for msg in st.session_state.msgs:
         if msg["role"] == "user" and not msg.get("read", False):
             msg["read"] = True
@@ -294,7 +298,6 @@ def build_sys():
         p = Path("materials") / f"{S.oc_material}.txt"
         if p.exists():
             base += "\n\n[知识库]\n" + p.read_text(encoding="utf-8")
-    # 提示 AI 可以通过 get_image 技能获取图片 data URL
     if S.oc_image_file_names:
         base += "\n\n你拥有以下图片资源，但你无法直接看到它们的 data URL。如果需要发送图片，请调用 `get_image` 工具，传入图片索引（从 0 开始），工具会返回图片的 data URL，然后你在回复中使用 Markdown 图片语法插入。"
         base += "\n图片列表：\n" + "\n".join([f"- {name}" for name in S.oc_image_file_names])
@@ -307,7 +310,6 @@ def prepare_msgs(msgs):
         d = {"role":m["role"]}
         if "content" in m and m["content"] is not None:
             d["content"] = m["content"]
-        # 用户图片已完全移除，此处不再处理
         if "tool_calls" in m:
             d["tool_calls"] = m["tool_calls"]
         if "tool_call_id" in m:
@@ -316,7 +318,6 @@ def prepare_msgs(msgs):
     return out
 
 def maybe_attach_image(text):
-    # AI 主动附加图片（使用 OC 图片池）
     if S.oc_image_prob > 0 and S.oc_image_pool:
         if random.random() < S.oc_image_prob:
             img_url = random.choice(S.oc_image_pool)
@@ -383,7 +384,6 @@ if pw != S.oc_pw:
                 S.auto_prob = prof.get("auto_message_probability",0.0)
                 S.auto_prompt = prof.get("auto_message_prompt","你可以偶尔主动聊聊天。")
                 S.use_ai_urg = prof.get("use_ai_urgency",False)
-                # 从 materials 加载图片
                 raw_image_files = prof.get("image_pool", [])
                 S.oc_image_file_names = raw_image_files
                 S.oc_image_pool = load_images_from_materials(raw_image_files)
@@ -405,7 +405,6 @@ for i, msg in enumerate(S.msgs):
     if msg["role"] == "tool" or msg.get("silent"): continue
     if msg["role"] == "assistant" and not msg.get("content"): continue
 
-    # 已读状态直接从消息的 read 字段读取（标记由 mark_previous_messages_read 保证）
     is_read = msg.get("read", False) if msg["role"] == "user" else False
 
     if prev_t is None or msg["timestamp"] - prev_t >= 1200:
@@ -471,7 +470,6 @@ if S.stage == "generating":
         st.rerun()
 
     S.ai_busy = True
-    # 在调用 API 前将所有未读消息标记为已读
     mark_previous_messages_read()
     
     tools, execs = load_skills()
@@ -524,8 +522,7 @@ if S.stage == "generating":
             else:
                 res = f"技能 {fname} 未找到"
             S.msgs.append({"role":"tool","tool_call_id":tc["id"],"content":res,"timestamp":now_beijing_timestamp()})
-            with st.chat_message("tool"):
-                st.caption(f"🔧 {fname} → {res}")
+            # 不显示 tool 消息在前端（已删除 st.chat_message 块）
         msgs2 = [{"role":"system","content":sys}] if sys else []
         msgs2 += prepare_msgs(S.msgs)
         full2 = ""
