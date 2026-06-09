@@ -44,37 +44,31 @@ def load_oc(oc_id):
             return json.load(fh)
     return None
 
-# ---------- 图片加载（无缓存，详细调试）----------
+# ---------- 图片加载（修复 RGBA/P 转换 + 调试输出）----------
 def load_images_from_materials(file_names):
     data_map = {}
-    # 尝试使用脚本所在目录，否则回退到当前工作目录
-    try:
-        base_dir = Path(__file__).parent
-    except NameError:
-        base_dir = Path.cwd()
+    base_dir = Path(__file__).parent if "__file__" in dir() else Path.cwd()
     materials_dir = base_dir / "materials"
-    
-    # 用于收集调试信息
     debug_info = []
-    
     for fname in file_names:
         img_path = materials_dir / fname
         if not img_path.exists():
-            debug_info.append(f"❌ {fname} → 文件不存在于 {img_path}")
+            debug_info.append(f"❌ {fname} → 文件不存在")
             continue
         try:
             img = Image.open(img_path)
             img.thumbnail((300, 300))
+            # 关键修复：将 RGBA/P 模式转换为 RGB
+            if img.mode in ('RGBA', 'P'):
+                img = img.convert('RGB')
             buf = io.BytesIO()
             img.save(buf, format='JPEG', quality=70)
             img_bytes = buf.getvalue()
             data_url = f"data:image/jpeg;base64,{base64.b64encode(img_bytes).decode()}"
             data_map[fname] = data_url
-            debug_info.append(f"✅ {fname} 加载成功")
+            debug_info.append(f"✅ {fname}")
         except Exception as e:
-            debug_info.append(f"❌ {fname} → 加载异常: {str(e)}")
-    
-    # 存储调试信息到 session_state，供界面显示
+            debug_info.append(f"❌ {fname} → {e}")
     st.session_state.image_debug = debug_info
     return data_map
 
@@ -253,7 +247,7 @@ defaults = {
     "oc_image_map":{},
     "oc_image_file_names":[],
     "oc_image_prob":0.0,
-    "image_debug": []   # 存储图片加载调试信息
+    "image_debug": []
 }
 for k,v in defaults.items():
     if k not in S:
@@ -342,7 +336,6 @@ if S.oc_name:
 else:
     st.title("🎭 OC 聊天助手")
 
-# 密码输入行
 col_label, col_input, col_status, col_clear = st.columns([1.5, 4, 0.5, 1])
 with col_label:
     st.markdown("密码状态：")
@@ -398,7 +391,6 @@ if pw != S.oc_pw:
                 S.auto_prompt = prof.get("auto_message_prompt","你可以偶尔主动聊聊天。")
                 S.use_ai_urg = prof.get("use_ai_urgency",False)
                 S.oc_image_file_names = prof.get("image_pool", [])
-                # 强制重新加载图片映射（无缓存）
                 S.oc_image_map = load_images_from_materials(S.oc_image_file_names)
                 S.oc_image_prob = prof.get("image_attachment_probability", 0.0)
                 S.pw_error = ""
@@ -412,7 +404,7 @@ if pw != S.oc_pw:
             S.oc_id = None
             S.pw_error = "密码无效（需包含数字）"
 
-# 显示图片加载调试信息
+# 图片调试面板
 if S.oc_image_file_names and hasattr(S, "image_debug"):
     with st.expander("🖼️ 图片加载状态", expanded=True):
         for line in S.image_debug:
