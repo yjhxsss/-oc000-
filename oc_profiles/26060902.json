@@ -15,7 +15,7 @@
   "custom_typo_dict": null,
   "unread_probability": 0.2,
   "reply_probability": 0.8,
-  "consecutive_unread_multiplier": 1.2,
+  "consecutive_unread_multiplier": 1.01,
   "ignore_keywords": [],
   "urgency_threshold": 0.7,
   "panic_mode": {
