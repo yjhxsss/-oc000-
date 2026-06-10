@@ -94,19 +94,17 @@ def get_typo_dict():
 # ---------- 颜文字 ----------
 KAOMOJI = ["(◕ᴗ◕✿)","(≧◡≦)","(๑•̀ㅂ•́)و✧","(*/ω＼*)","(´• ω •`)"]
 
-# ---------- 特效（保护图片标记）----------
+# ---------- 特效（保护图片标记和文件名）----------
 def apply_effects(text, typo_rate, emoji_rate, special_punct):
     if not text:
         return text
-    # 提取并保护所有图片标记和文件名（暂存）
+    # 保护图片标记和文件名
     image_markers = re.findall(r'\[图片:[^\]]*\]', text)
-    # 同时保护 image_pool 中的精确文件名（避免标点替换破坏匹配）
     protected_names = {}
     for i, fname in enumerate(st.session_state.get("oc_image_file_names", [])):
         placeholder = f"__IMG_NAME_{i}__"
         text = text.replace(fname, placeholder)
         protected_names[placeholder] = fname
-    # 替换图片标记为临时占位符
     for idx, marker in enumerate(image_markers):
         placeholder = f"__IMG_MARKER_{idx}__"
         text = text.replace(marker, placeholder)
@@ -133,7 +131,7 @@ def apply_effects(text, typo_rate, emoji_rate, special_punct):
                 k = random.choice(KAOMOJI)
                 sentences[i] = k + sent if random.random()<0.5 else sent + k
         text = "".join(sentences)
-    # 还原图片标记和文件名
+    # 还原
     for placeholder, fname in protected_names.items():
         text = text.replace(placeholder, fname)
     for idx, marker in enumerate(image_markers):
@@ -150,16 +148,14 @@ def typewriter(ph, text, speed):
         time.sleep(speed)
     ph.markdown(text)
 
-# ---------- 智能图片提取（标记优先 + 文件名兜底）----------
+# ---------- 智能图片提取 ----------
 def find_images_in_message(content):
-    # 1. 标准标记提取
     pattern = re.compile(r'\[图片[:：]\s*([^\]]+?)\s*\]')
     matches = pattern.findall(content)
     if matches:
         clean = pattern.sub('', content).strip()
         valid_images = [m.strip() for m in matches if m.strip() in S.oc_image_map]
         return clean, valid_images
-    # 2. 文件名扫描
     clean = content
     found = []
     for fname in sorted(S.oc_image_file_names, key=len, reverse=True):
@@ -323,14 +319,15 @@ def build_sys(force_image=False):
         if p.exists():
             base += "\n\n[知识库]\n" + p.read_text(encoding="utf-8")
     
+    # 📡 联网搜索提示（新增）
+    base += "\n\n你可以使用 web_search 技能来获取最新的网络信息。当用户询问需要查询的内容时，请调用该技能。"
+
     if S.oc_image_file_names:
         base += "\n\n你拥有以下表情图片：\n"
         for fname in S.oc_image_file_names:
             base += f"- {fname}\n"
         if force_image:
-            base += (
-                "【重要】本次回复你必须附带一张图片。直接把图片的文件名放在回复中即可，无需括号。"
-            )
+            base += "【重要】本次回复你必须附带一张图片。直接把图片的文件名放在回复中即可，无需括号。"
         else:
             base += "【注意】本次回复不要添加任何图片文件名。"
     
@@ -539,7 +536,6 @@ if S.stage == "generating":
     ph.empty()
     if full and full.strip():
         full = re.sub(r"\[URGENCY:\d+\.?\d*\]","",full).strip()
-        # 应用特效（已保护图片标记和文件名）
         processed = apply_effects(full, S.oc_typo, S.oc_emoji, S.oc_punct)
         speed = S.oc_speed
         if urgency >= S.oc_urg_thresh and S.oc_panic:
