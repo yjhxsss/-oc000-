@@ -44,7 +44,7 @@ def load_oc(oc_id):
             return json.load(fh)
     return None
 
-# ---------- 图片加载（RGBA/P 转 RGB，无缓存）----------
+# ---------- 图片加载（兼容 RGBA/P 转换）----------
 def load_images_from_materials(file_names):
     data_map = {}
     base_dir = Path(__file__).parent if "__file__" in dir() else Path.cwd()
@@ -94,10 +94,23 @@ def get_typo_dict():
 # ---------- 颜文字 ----------
 KAOMOJI = ["(◕ᴗ◕✿)","(≧◡≦)","(๑•̀ㅂ•́)و✧","(*/ω＼*)","(´• ω •`)"]
 
-# ---------- 特效 ----------
+# ---------- 特效（保护图片标记）----------
 def apply_effects(text, typo_rate, emoji_rate, special_punct):
     if not text:
         return text
+    # 提取并保护所有图片标记和文件名（暂存）
+    image_markers = re.findall(r'\[图片:[^\]]*\]', text)
+    # 同时保护 image_pool 中的精确文件名（避免标点替换破坏匹配）
+    protected_names = {}
+    for i, fname in enumerate(st.session_state.get("oc_image_file_names", [])):
+        placeholder = f"__IMG_NAME_{i}__"
+        text = text.replace(fname, placeholder)
+        protected_names[placeholder] = fname
+    # 替换图片标记为临时占位符
+    for idx, marker in enumerate(image_markers):
+        placeholder = f"__IMG_MARKER_{idx}__"
+        text = text.replace(marker, placeholder)
+    # 应用特效
     d = get_typo_dict()
     if special_punct:
         new = ""
@@ -120,6 +133,12 @@ def apply_effects(text, typo_rate, emoji_rate, special_punct):
                 k = random.choice(KAOMOJI)
                 sentences[i] = k + sent if random.random()<0.5 else sent + k
         text = "".join(sentences)
+    # 还原图片标记和文件名
+    for placeholder, fname in protected_names.items():
+        text = text.replace(placeholder, fname)
+    for idx, marker in enumerate(image_markers):
+        placeholder = f"__IMG_MARKER_{idx}__"
+        text = text.replace(placeholder, marker)
     return text
 
 # ---------- 打字机 ----------
@@ -131,36 +150,45 @@ def typewriter(ph, text, speed):
         time.sleep(speed)
     ph.markdown(text)
 
-# ---------- 图片提取（忽略空文件名）----------
-def extract_image_filename(text):
-    pattern = re.compile(r'\[图片:\s*([^\]]+?)\s*\]')
-    match = pattern.search(text)
-    if match:
-        fname = match.group(1).strip()
-        if fname:   # 有具体文件名才返回
-            return fname
-    return None
+# ---------- 智能图片提取（标记优先 + 文件名兜底）----------
+def find_images_in_message(content):
+    # 1. 标准标记提取
+    pattern = re.compile(r'\[图片[:：]\s*([^\]]+?)\s*\]')
+    matches = pattern.findall(content)
+    if matches:
+        clean = pattern.sub('', content).strip()
+        valid_images = [m.strip() for m in matches if m.strip() in S.oc_image_map]
+        return clean, valid_images
+    # 2. 文件名扫描
+    clean = content
+    found = []
+    for fname in sorted(S.oc_image_file_names, key=len, reverse=True):
+        if fname in clean:
+            found.append(fname)
+            clean = clean.replace(fname, '', 1)
+    return clean.strip(), found
 
 def render_message(content):
-    # 移除所有 [图片...] 标记（包括空的），防止显示纯文字“图片”
-    clean = re.sub(r'\[图片[^\]]*\]', '', content).strip()
-    img_name = extract_image_filename(content)
+    clean, images = find_images_in_message(content)
     if clean:
         st.markdown(clean)
-    if img_name and img_name in S.oc_image_map:
-        st.image(S.oc_image_map[img_name], width=200, caption=img_name)
+    for img in images:
+        data_url = S.oc_image_map.get(img)
+        if data_url:
+            st.image(data_url, width=200, caption=img)
 
 def render_message_with_typewriter(content, speed):
-    clean = re.sub(r'\[图片[^\]]*\]', '', content).strip()
-    img_name = extract_image_filename(content)
+    clean, images = find_images_in_message(content)
     if clean:
         placeholder = st.empty()
         if speed > 0:
             typewriter(placeholder, clean, speed)
         else:
             placeholder.markdown(clean)
-    if img_name and img_name in S.oc_image_map:
-        st.image(S.oc_image_map[img_name], width=200, caption=img_name)
+    for img in images:
+        data_url = S.oc_image_map.get(img)
+        if data_url:
+            st.image(data_url, width=200, caption=img)
 
 # ---------- 分段相关 ----------
 def random_split(text, min_len, max_len):
@@ -301,11 +329,10 @@ def build_sys(force_image=False):
             base += f"- {fname}\n"
         if force_image:
             base += (
-                "【重要】本次回复你必须附带一张图片。请在回复的末尾严格按照格式 `[图片:文件名]` 输出，"
-                "例如 `[图片:开坦克.png]`。必须写出完整文件名，绝不能只写 `[图片]` 或 `[图片:]`。"
+                "【重要】本次回复你必须附带一张图片。直接把图片的文件名放在回复中即可，无需括号。"
             )
         else:
-            base += "【注意】本次回复不要添加任何图片标记，严禁输出 `[图片]` 字样。"
+            base += "【注意】本次回复不要添加任何图片文件名。"
     
     return base
 
@@ -319,7 +346,7 @@ def prepare_msgs(msgs):
         d = {"role": m["role"]}
         if "content" in m and m["content"] is not None:
             content = m["content"]
-            content = re.sub(r'\[图片[^\]]*\]', '[图片]', content).strip()
+            content = re.sub(r'\[图片:[^\]]*\]', '[图片]', content).strip()
             d["content"] = content if content else "…"
         out.append(d)
     return out
@@ -512,6 +539,7 @@ if S.stage == "generating":
     ph.empty()
     if full and full.strip():
         full = re.sub(r"\[URGENCY:\d+\.?\d*\]","",full).strip()
+        # 应用特效（已保护图片标记和文件名）
         processed = apply_effects(full, S.oc_typo, S.oc_emoji, S.oc_punct)
         speed = S.oc_speed
         if urgency >= S.oc_urg_thresh and S.oc_panic:
