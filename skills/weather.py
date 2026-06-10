@@ -21,7 +21,6 @@ TOOL_DEF = {
 def execute(args):
     city = args.get("city", "北京")
     try:
-        # 使用 wttr.in 免费天气 API，返回简洁格式
         url = f"https://wttr.in/{city}?format=%C+%t+%h+%w&lang=zh"
         resp = requests.get(url, timeout=5)
         if resp.status_code == 200:
